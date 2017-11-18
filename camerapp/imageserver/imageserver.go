@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -86,7 +87,7 @@ func HandleImageFiles() {
 				check(err)
 				delete(currentFiles, k)
 				if k == mostRecentFile {
-					mostRecentFile = nil
+					mostRecentFile = ""
 				}
 			}
 		}
@@ -158,14 +159,16 @@ func main() {
 				// We also need to lock access to mostRecentFile, otherwise a race condition is possible
 				// where the file is deleted after the initial check
 				currentFilesLock.Lock()
-				if mostRecentFile != nil {
-					sendLen := len(mostRecentFile)
-					sendPacketBuffer[0] = 'L'
-					sendPacketBuffer[1] = byte(sendLen)
-					copy(sendPacketBuffer[2:], []byte(mostRecentFile))
-					sendLen = sendLen + 2
-					binary.LittleEndian.PutUint32(sendPacketBuffer[sendLen:], currentFiles[mostRecentFile].size)
+				sendLen := len(mostRecentFile)
+				if sendLen == 0 {
+					currentFilesLock.Unlock()
+					continue
 				}
+				sendPacketBuffer[0] = 'L'
+				sendPacketBuffer[1] = byte(sendLen)
+				copy(sendPacketBuffer[2:], []byte(mostRecentFile))
+				sendLen = sendLen + 2
+				binary.LittleEndian.PutUint32(sendPacketBuffer[sendLen:], currentFiles[mostRecentFile].size)
 				currentFilesLock.Unlock()
 				sendLen = sendLen + 4
 				n, err = udpConnection.WriteTo(sendPacketBuffer[:sendLen], remoteUDPaddress)
