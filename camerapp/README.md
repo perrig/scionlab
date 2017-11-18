@@ -16,9 +16,11 @@ delivers image file names or file blocks upon request.
 List of commands:
 * L: lists image available for download
      > request format: 1 byte "L"
-     > response format:  1 byte "L", 1 byte filename length, <filename string>, int32 image length
+	 >
+     > response format:  1 byte "L", 1 byte filename length, filename string, int32 image length
 * G: fetches a range of bytes from the file of the image
-     > request format: 1 byte "G", 1 byte filename length, <filename string>, int32 starting byte, int32 ending byte
+     > request format: 1 byte "G", 1 byte filename length, filename string, int32 starting byte, int32 ending byte
+	 >
      > response format: 1 byte "G", int32 starting byte, int32 ending byte, bytes of image
 
 Note: The int32 are in little endian format. The ending byte is not included in the response, so 0-1000 fetches [0:999].
