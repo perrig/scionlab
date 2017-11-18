@@ -44,8 +44,11 @@ func check(e error) {
 	}
 }
 
-var currentFiles []ImageFileType
-var currentFilesLock sync.Mutex
+var (
+	currentFiles     map[string]*ImageFileType
+	mostRecentFile   string
+	currentFilesLock sync.Mutex
+)
 
 func HandleImageFiles() {
 	for {
@@ -64,42 +67,31 @@ func HandleImageFiles() {
 				continue
 			}
 			// Check if we've already read in the image
-			foundImage := false
 			currentFilesLock.Lock()
-			for _, ift := range currentFiles {
-				if strings.Compare(entry.Name(), ift.name) == 0 {
-					foundImage = true
-					break
-				}
-			}
-			if !foundImage {
+			if _, ok := currentFiles[entry.Name()]; !ok {
 				fileContents, err := ioutil.ReadFile(entry.Name())
 				check(err)
 				newFile := ImageFileType{entry.Name(), uint32(entry.Size()), fileContents, time.Now()}
-				currentFiles = append(currentFiles, newFile)
+				currentFiles[newFile.name] = &newFile
+				mostRecentFile = newFile.name
 			}
 			currentFilesLock.Unlock()
 		}
 		// Check if an image should be deleted
 		now := time.Now()
-		deleteEntry := -1
-		// For simplicity, only one entry can be deleted in each iteration
 		currentFilesLock.Lock()
-		for i, ift := range currentFiles {
-			age := now.Sub(ift.readTime)
-			if age > MaxFileAge+MaxFileAgeGracePeriod {
-				deleteEntry = i
+		for k, v := range currentFiles {
+			if now.Sub(v.readTime) > MaxFileAge+MaxFileAgeGracePeriod {
+				err = os.Remove(k)
+				check(err)
+				delete(currentFiles, k)
+				if k == mostRecentFile {
+					mostRecentFile = nil
+				}
 			}
 		}
 		currentFilesLock.Unlock()
-		if deleteEntry >= 0 {
-			currentFilesLock.Lock()
-			err = os.Remove(currentFiles[deleteEntry].name)
-			check(err)
-			copy(currentFiles[deleteEntry:], currentFiles[deleteEntry+1:])
-			currentFiles = currentFiles[:len(currentFiles)-1]
-			currentFilesLock.Unock()
-		}
+
 		time.Sleep(imageReadInterval)
 	}
 }
@@ -111,7 +103,7 @@ func printUsage() {
 }
 
 func main() {
-	currentFiles = make([]ImageFileType, 0)
+	currentFiles = make(map[string]*ImageFileType)
 
 	go HandleImageFiles()
 
@@ -162,18 +154,19 @@ func main() {
 			check(err)
 		}
 		if n > 0 {
-			if receivePacketBuffer[0] == 'L' && len(currentFiles) > 0 {
-				mostRecentImage := currentFiles[len(currentFiles)-1]
-				sendLen := len(mostRecentImage.name)
-				if sendLen > MaxFileNameLength {
-					fmt.Println("Error, file size too long, should never happen")
-					continue
+			if receivePacketBuffer[0] == 'L' {
+				// We also need to lock access to mostRecentFile, otherwise a race condition is possible
+				// where the file is deleted after the initial check
+				currentFilesLock.Lock()
+				if mostRecentFile != nil {
+					sendLen := len(mostRecentFile)
+					sendPacketBuffer[0] = 'L'
+					sendPacketBuffer[1] = byte(sendLen)
+					copy(sendPacketBuffer[2:], []byte(mostRecentFile))
+					sendLen = sendLen + 2
+					binary.LittleEndian.PutUint32(sendPacketBuffer[sendLen:], currentFiles[mostRecentFile].size)
 				}
-				sendPacketBuffer[0] = 'L'
-				sendPacketBuffer[1] = byte(sendLen)
-				copy(sendPacketBuffer[2:], []byte(mostRecentImage.name))
-				sendLen = sendLen + 2
-				binary.LittleEndian.PutUint32(sendPacketBuffer[sendLen:], mostRecentImage.size)
+				currentFilesLock.Unlock()
 				sendLen = sendLen + 4
 				n, err = udpConnection.WriteTo(sendPacketBuffer[:sendLen], remoteUDPaddress)
 				check(err)
@@ -181,25 +174,26 @@ func main() {
 				filenameLen := int(receivePacketBuffer[1])
 				if n >= (2 + filenameLen + 8) {
 					filename := string(receivePacketBuffer[2 : filenameLen+2])
+					currentFilesLock.Lock()
+					v, ok := currentFiles[filename]
+					// We don't need to lock any more, since we now have a pointer to the image structure
+					// which does not get changed once set up.
+					currentFilesLock.Unlock()
+					if !ok {
+						continue
+					}
 					startByte := binary.LittleEndian.Uint32(receivePacketBuffer[filenameLen+2:])
 					endByte := binary.LittleEndian.Uint32(receivePacketBuffer[filenameLen+6:])
-					currentFilesLock.Lock()
-					for _, ift := range currentFiles {
-						if strings.Compare(filename, ift.name) == 0 {
-							if endByte > startByte && endByte <= (ift.size+1) {
-								sendPacketBuffer[0] = 'G'
-								// Copy startByte and endByte from request packet
-								copy(sendPacketBuffer[1:], receivePacketBuffer[filenameLen+2:filenameLen+10])
-								// Copy image contents
-								copy(sendPacketBuffer[9:], ift.content[startByte:endByte])
-								sendLen := 9 + endByte - startByte
-								n, err = udpConnection.WriteTo(sendPacketBuffer[:sendLen], remoteUDPaddress)
-								check(err)
-							}
-							break
-						}
+					if endByte > startByte && endByte <= v.size+1 {
+						sendPacketBuffer[0] = 'G'
+						// Copy startByte and endByte from request packet
+						copy(sendPacketBuffer[1:], receivePacketBuffer[filenameLen+2:filenameLen+10])
+						// Copy image contents
+						copy(sendPacketBuffer[9:], v.content[startByte:endByte])
+						sendLen := 9 + endByte - startByte
+						n, err = udpConnection.WriteTo(sendPacketBuffer[:sendLen], remoteUDPaddress)
+						check(err)
 					}
-					currentFilesLock.Unlock()
 				}
 			}
 		}

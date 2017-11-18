@@ -2,9 +2,11 @@
 
 This repo contains software for supporting SCIONLab.
 
-The repo currently contains two applications: camerapp and sensorapp. All applications are written in Go, with supporting code in Python. A SCION Internet connection (for instance via SCIONLab) is required to run these applications.
+The repo currently contains two applications: camerapp and sensorapp. Both applications are written in Go, with some supporting code in Python. A SCION Internet connection (for instance via SCIONLab) is required to run these applications.
 
 More information on [SCION](https://www.scion-architecture.net/), and [tutorials on how to set up SCION and SCIONLab](https://netsec-ethz.github.io/scion-tutorials/).
+
+***
 
 ## camerapp
 
@@ -45,6 +47,8 @@ ${GOPATH}/src/github.com/perrig/scionlab/camerapp/imageserver/paparazzi.py > /de
 imageserver -s 1-1011,[192.33.93.166]:42002 &
 ```
 
+***
+
 ## sensorapp
 
 Sensorapp contains fetcher and server applications for sensor readings, using the SCION network.
@@ -58,7 +62,7 @@ cd ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorfetcher
 go install
 ```
 
-The `sensorfetcher` application sends a 0-length SCION UDP packet to the `sensorserver` application to fetch the sensor readings. Since a string is returned, the readings are simply printed out. To keep the application as simple as necessary, no reliability is built in -- in case of packet loss, the user needs to abort and re-try. An example server is at `1-6,[192.33.93.173]:42003`, its readings can be fetched as follows (need to replace client address with actual client address):
+The `sensorfetcher` application sends a 0-length SCION UDP packet to the `sensorserver` application to fetch the sensor readings. A string is returned containing all the sensor readings. To keep the application as simple as possible, no reliability is built in -- in case of packet loss, the user needs to abort and re-try. An example server is at `1-6,[192.33.93.173]:42003`, its readings can be fetched as follows (need to replace client address with actual client address, with an arbitrary free port):
 
 ```shell
 sensorfetcher -s 1-6,[192.33.93.173]:42003 -c 1-1006,[10.0.2.15]:42001
