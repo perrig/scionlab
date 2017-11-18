@@ -35,13 +35,12 @@ err = udpConnection.SetReadDeadline(time.Now().Add(maxWaitDelay))
 n, _, err = udpConnection.ReadFrom(packetBuffer)
 ```
 
-!!! tip
-	After setting a read deadline, if it didn't trigger don't forget to clear it with a zero timestamp.
-	```go
-	var tzero time.Time // initialized to "zero" time
-	err = udpConnection.SetReadDeadline(tzero)
-	```
-	Otherwise, it will trigger during a subsequent `Read` call.
+Tip. After setting a read deadline, if it didn't trigger don't forget to clear it with a zero timestamp.
+```go
+var tzero time.Time // initialized to "zero" time
+err = udpConnection.SetReadDeadline(
+```
+Otherwise, it will trigger during a subsequent `Read` call.
 
 If the request or server response packet is lost, the ReadFrom call returns after `maxWaitDelay` and the application re-sends the request up to `maxRetries` number of times.
 

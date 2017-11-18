@@ -56,15 +56,17 @@ func fetchFileInfo(udpConnection *snet.Conn) (string, uint32, time.Duration, err
 		n, _, err = udpConnection.ReadFrom(packetBuffer)
 		if err != nil {
 			// Read error, most likely Timeout
-			if operr, ok := err.(*snet.OpError); ok {
-				// This is an OpError, could be SCMP or Timeout, in both cases continue
-				if operr.Timeout() {
-					continue
-				}
-				if operr.SCMP() != nil {
-					continue
-				}
-			}
+			continue
+			// Uncomment and remove "continue" on previous line once the new version of snet is part of the SCIONLab branch
+			// if operr, ok := err.(*snet.OpError); ok {
+			// 	// This is an OpError, could be SCMP or Timeout, in both cases continue
+			// 	if operr.Timeout() {
+			// 		continue
+			// 	}
+			// 	if operr.SCMP() != nil {
+			// 		continue
+			// 	}
+			// }
 			// If it's not an snet Timeout or SCMP error, then it's something more serious and fail
 			check(err)
 		}
@@ -117,12 +119,14 @@ func blockReceiver(receivedBlockChan chan uint32, udpConnection *snet.Conn, file
 	for {
 		n, _, err := udpConnection.ReadFrom(packetBuffer)
 		if err != nil {
-			if operr, ok := err.(*snet.OpError); ok {
-				// This is an OpError, could be SCMP, in which case continue
-				if operr.SCMP() != nil {
-					continue
-				}
-			}
+			continue
+			// Uncomment and remove "continue" on previous line once the new version of snet is part of the SCIONLab branch
+			// if operr, ok := err.(*snet.OpError); ok {
+			// 	// This is an OpError, could be SCMP, in which case continue
+			// 	if operr.SCMP() != nil {
+			// 		continue
+			// 	}
+			// }
 			// If it's not an snet SCMP error, then it's something more serious and fail
 			check(err)
 		}

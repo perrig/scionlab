@@ -150,12 +150,14 @@ func main() {
 		// Handle client requests
 		n, remoteUDPaddress, err := udpConnection.ReadFrom(receivePacketBuffer)
 		if err != nil {
-			if operr, ok := err.(*snet.OpError); ok {
-				// This is an OpError, could be SCMP, in which case continue
-				if operr.SCMP() != nil {
-					continue
-				}
-			}
+			continue
+			// Uncomment and remove "continue" on previous line once the new version of snet is part of the SCIONLab branch
+			// if operr, ok := err.(*snet.OpError); ok {
+			// 	// This is an OpError, could be SCMP, in which case continue
+			// 	if operr.SCMP() != nil {
+			// 		continue
+			// 	}
+			// }
 			// If it's not an snet SCMP error, then it's something more serious and fail
 			check(err)
 		}
