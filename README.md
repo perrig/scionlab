@@ -17,8 +17,6 @@ Camerapp contains image fetcher and server applications, using the SCION network
 To install imagefetcher:
 ```shell
 go get github.com/perrig/scionlab/camerapp/imagefetcher
-cd ${GOPATH}/src/github.com/perrig/scionlab/camerapp/imagefetcher
-go install
 ```
 
 To use the image fetcher, you will need to express your local host's address as a SCION address (in the format `ISD-AS,[IPv4]:port`) and know the address of an image server, for instance `1-1011,[192.33.93.166]:42002`
@@ -35,8 +33,6 @@ The fetched image is then saved in the local directory.
 To install imageserver:
 ```shell
 go get github.com/perrig/scionlab/camerapp/imageserver
-cd ${GOPATH}/src/github.com/perrig/scionlab/camerapp/imageserver
-go install
 ```
 
 The `imageserver` application keeps looking for `.jpg` files in the current directory, and offers them for download to clients on the SCION network. The assumption is that the application is used in conjunction with an application that periodically writes an image to the file system. After an amount of time (currently 10 minutes), the image files are deleted to limit the amount of storage needed.
@@ -58,8 +54,6 @@ Sensorapp contains fetcher and server applications for sensor readings, using th
 To install sensorfetcher:
 ```shell
 go get github.com/perrig/scionlab/sensorapp/sensorfetcher
-cd ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorfetcher
-go install
 ```
 
 The `sensorfetcher` application sends a 0-length SCION UDP packet to the `sensorserver` application to fetch the sensor readings. A string is returned containing all the sensor readings. To keep the application as simple as possible, no reliability is built in -- in case of packet loss, the user needs to abort and re-try. An example server is at `1-6,[192.33.93.173]:42003`, its readings can be fetched as follows (need to replace client address with actual client address, with an arbitrary free port):
@@ -73,8 +67,6 @@ sensorfetcher -s 1-6,[192.33.93.173]:42003 -c 1-1006,[10.0.2.15]:42001
 To install sensorserver:
 ```shell
 go get github.com/perrig/scionlab/sensorapp/sensorserver
-cd ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorserver
-go install
 ```
 
 We use sensors from Tinkerforge, and the `sensorreader.py` Python application fetches the sensor values and writes them to `stdout`. The `sensorserver` application collects the readings, and serves them as a string to client requests. To start, we use the following command:

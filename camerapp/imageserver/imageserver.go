@@ -1,7 +1,7 @@
 // imageserver application. This simple image server sends images via a series of UDP requests.
 // For more documentation on the application see:
 // https://github.com/perrig/scionlab/blob/master/README.md
-// https://github.com/perrig/scionlab/camerapp/blob/master/README.md
+// https://github.com/perrig/scionlab/blob/master/camerapp/README.md
 package main
 
 import (
