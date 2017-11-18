@@ -39,7 +39,7 @@ The `imageserver` application keeps looking for `.jpg` files in the current dire
 
 Included is a simple `paparazzi.py` application, which reads the camera image on a Raspberry Pi. The system is launched as follows:
 ```shell
-${GOPATH}/src/github.com/perrig/scionlab/camerapp/imageserver/paparazzi.py > /dev/null &
+python3 ${GOPATH}/src/github.com/perrig/scionlab/camerapp/imageserver/paparazzi.py > /dev/null &
 imageserver -s 1-1011,[192.33.93.166]:42002 &
 ```
 
@@ -72,5 +72,5 @@ go get github.com/perrig/scionlab/sensorapp/sensorserver
 We use sensors from Tinkerforge, and the `sensorreader.py` Python application fetches the sensor values and writes them to `stdout`. The `sensorserver` application collects the readings, and serves them as a string to client requests. To start, we use the following command:
 
 ```shell
-sensorreader.py | sensorserver -s 1-6,[192.33.93.173]:42003 &
+python3 ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorserver/sensorreader.py | sensorserver -s 1-6,[192.33.93.173]:42003 &
 ```
