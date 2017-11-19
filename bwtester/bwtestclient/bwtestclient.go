@@ -10,7 +10,7 @@ import (
 	"crypto/rand"
 	// "encoding/binary"
 	// "encoding/gob"
-	// "flag"
+	"flag"
 	"fmt"
 	"net"
 	// "io/ioutil"

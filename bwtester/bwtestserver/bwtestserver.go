@@ -5,23 +5,18 @@
 package main
 
 import (
-	// "bytes"
-	// "crypto/aes"
-	// "crypto/rand"
-	// "encoding/binary"
-	// "encoding/gob"
-	// "flag"
+	"flag"
 	"fmt"
 	"net"
-	// "io/ioutil"
 	"strconv"
 	"time"
 
-	// "github.com/netsec-ethz/scion/go/lib/snet"
+	"github.com/netsec-ethz/scion/go/lib/snet"
 	. "github.com/perrig/scionlab/bwtester/bwtestlib"
 )
 
 func main() {
+	
 
 	serverUDPaddress, err := net.ResolveUDPAddr( "udp", ":18007" )
 	Check( err )
