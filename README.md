@@ -10,7 +10,7 @@ More information on [SCION](https://www.scion-architecture.net/), and [tutorials
 
 ## camerapp
 
-Camerapp contains image fetcher and server applications, using the SCION network.
+Camerapp contains image fetcher and server applications, using the SCION network. Documentation on the code is available in the [README.md](https://github.com/perrig/scionlab/blob/master/camerapp/README.md)
 
 ### imagefetcher
 
@@ -74,3 +74,26 @@ We use sensors from Tinkerforge, and the `sensorreader.py` Python application fe
 ```shell
 python3 ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorserver/sensorreader.py | sensorserver -s 1-6,[192.33.93.173]:42003 &
 ```
+
+***
+
+## bwtester
+
+The bandwidth testing application `bwtester` enables a variety of bandwidth tests on the SCION network. Installation and usage are described below. Documentation of the code and protocol are described in the bwtester's [README.md](https://github.com/perrig/scionlab/blob/master/bwtester/README.md).
+
+### bwtestclient
+
+To install bwtestclient:
+```shell
+go get github.com/perrig/scionlab/bwtester/bwtestclient
+```
+
+### bwtestserver
+
+To install bwtestserver:
+```shell
+go get github.com/perrig/scionlab/bwtester/bwtestserver
+```
+
+
+***

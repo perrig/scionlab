@@ -32,7 +32,7 @@ const (
 	imageReadInterval time.Duration = time.Second * 59
 )
 
-type ImageFileType struct {
+type imageFileType struct {
 	name     string
 	size     uint32
 	content  []byte
@@ -46,7 +46,7 @@ func check(e error) {
 }
 
 var (
-	currentFiles     map[string]*ImageFileType
+	currentFiles     map[string]*imageFileType
 	mostRecentFile   string
 	currentFilesLock sync.Mutex
 )
@@ -72,7 +72,7 @@ func HandleImageFiles() {
 			if _, ok := currentFiles[entry.Name()]; !ok {
 				fileContents, err := ioutil.ReadFile(entry.Name())
 				check(err)
-				newFile := ImageFileType{entry.Name(), uint32(entry.Size()), fileContents, time.Now()}
+				newFile := imageFileType{entry.Name(), uint32(entry.Size()), fileContents, time.Now()}
 				currentFiles[newFile.name] = &newFile
 				mostRecentFile = newFile.name
 			}
@@ -104,7 +104,7 @@ func printUsage() {
 }
 
 func main() {
-	currentFiles = make(map[string]*ImageFileType)
+	currentFiles = make(map[string]*imageFileType)
 
 	go HandleImageFiles()
 

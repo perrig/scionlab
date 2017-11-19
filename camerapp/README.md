@@ -38,7 +38,7 @@ n, _, err = udpConnection.ReadFrom(packetBuffer)
 Tip. After setting a read deadline, if it didn't trigger don't forget to clear it with a zero timestamp.
 ```go
 var tzero time.Time // initialized to "zero" time
-err = udpConnection.SetReadDeadline(
+err = udpConnection.SetReadDeadline(tzero)
 ```
 Otherwise, it will trigger during a subsequent `Read` call.
 
