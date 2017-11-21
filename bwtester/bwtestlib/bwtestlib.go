@@ -7,7 +7,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log"
-	// "net"
 	"time"
 
 	"github.com/netsec-ethz/scion/go/lib/snet"

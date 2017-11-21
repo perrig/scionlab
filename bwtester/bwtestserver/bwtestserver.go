@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/scion/go/lib/snet"
-	// . "github.com/perrig/scionlab/bwtester/bwtestlib"
-	. "adrian/bwtestlib"
+	. "github.com/perrig/scionlab/bwtester/bwtestlib"
 )
 
 func printUsage() {
