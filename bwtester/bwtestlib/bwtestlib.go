@@ -3,15 +3,14 @@ package bwtestlib
 import (
 	"bytes"
 	"crypto/aes"
-	// "crypto/rand"
 	"encoding/binary"
 	"encoding/gob"
-	// "flag"
 	"fmt"
-	// "io/ioutil"
 	"log"
-	"net"
+	// "net"
 	"time"
+
+	"github.com/netsec-ethz/scion/go/lib/snet"
 )
 
 const (
@@ -39,16 +38,16 @@ func Check(e error) {
 // The value of the ith 16-byte block is simply an encryption of i under the key
 func PrgFill(key []byte, iv int, data []byte) {
 	i := uint32(iv)
-	aesCipher, err := aes.NewCipher( key )
-	Check( err )
+	aesCipher, err := aes.NewCipher(key)
+	Check(err)
 	s := aesCipher.BlockSize()
 	pt := make([]byte, s)
 	j := 0
 	for j <= len(data)-s {
 		binary.LittleEndian.PutUint32(pt, i)
 		aesCipher.Encrypt(data, pt)
-		j = j+s
-		i = i+uint32(s)
+		j = j + s
+		i = i + uint32(s)
 	}
 	// Check if fewer than BlockSize bytes are required for the final block
 	if j < len(data) {
@@ -59,7 +58,7 @@ func PrgFill(key []byte, iv int, data []byte) {
 }
 
 // Encode BwtestParameters into a sufficiently large byte buffer that is passed in, return the number of bytes written
-func EncodeBwtestParameters( bwtp *BwtestParameters, buf []byte ) (int) {
+func EncodeBwtestParameters(bwtp *BwtestParameters, buf []byte) int {
 	var bb bytes.Buffer
 	enc := gob.NewEncoder(&bb)
 	err := enc.Encode(*bwtp)
@@ -69,7 +68,7 @@ func EncodeBwtestParameters( bwtp *BwtestParameters, buf []byte ) (int) {
 }
 
 // Decode BwtestParameters from byte buffer that is passed in, returns BwtestParameters structure and number of bytes consumed
-func DecodeBwtestParameters( buf []byte ) (*BwtestParameters, int) {
+func DecodeBwtestParameters(buf []byte) (*BwtestParameters, int) {
 	bb := bytes.NewBuffer(buf)
 	is := bb.Len()
 	dec := gob.NewDecoder(bb)
@@ -79,7 +78,7 @@ func DecodeBwtestParameters( buf []byte ) (*BwtestParameters, int) {
 	return &v, is - bb.Len()
 }
 
-func HandleDCConnSend(bwp *BwtestParameters, udpConnection *net.UDPConn) {
+func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 	sb := make([]byte, bwp.PacketSize)
 	i := 0
 	t0 := time.Now()
@@ -95,19 +94,19 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *net.UDPConn) {
 			// fmt.Println("\nBehind:", t2.Sub(t1))
 		}
 		// Send packet now
-		PrgFill( bwp.PrgKey, i*bwp.PacketSize, sb )
+		PrgFill(bwp.PrgKey, i*bwp.PacketSize, sb)
 		// Place packet number at the beginning of the packet, overwriting some PRG data
 		binary.LittleEndian.PutUint32(sb, uint32(i*bwp.PacketSize))
 		n, err := udpConnection.Write(sb)
 		Check(err)
 		if n < bwp.PacketSize {
-			Check( fmt.Errorf( "Insufficient number of bytes written:", n, "instead of:", bwp.PacketSize ))
+			Check(fmt.Errorf("Insufficient number of bytes written:", n, "instead of:", bwp.PacketSize))
 		}
 		i++
 	}
 }
 
-func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *net.UDPConn) {
+func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn) {
 	t0 := time.Now()
 	finish := t0.Add(bwp.BwtestDuration + GracePeriod)
 	numPacketsReceived := 0
@@ -117,7 +116,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *net.UDPConn) {
 	recBuf := make([]byte, bwp.PacketSize+1000)
 	cmpBuf := make([]byte, bwp.PacketSize)
 	for time.Now().Before(finish) && numPacketsReceived < bwp.NumPackets {
-		n, _, err := udpConnection.ReadFromUDP(recBuf)
+		n, _, err := udpConnection.ReadFrom(recBuf)
 		// Ignore errors, todo: detect type of error
 		if err != nil {
 			continue
@@ -135,7 +134,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *net.UDPConn) {
 		// Todo: create separate verif function which only compares the packet
 		// so that a discrepancy is noticed immediately without generating the
 		// entire packet
-		iv := int( binary.LittleEndian.Uint32(recBuf))
+		iv := int(binary.LittleEndian.Uint32(recBuf))
 		PrgFill(bwp.PrgKey, iv, cmpBuf)
 		binary.LittleEndian.PutUint32(cmpBuf, uint32(iv))
 		if bytes.Equal(recBuf[:bwp.PacketSize], cmpBuf) {
