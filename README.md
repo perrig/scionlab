@@ -76,3 +76,24 @@ python3 ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorserver/sensorre
 ```
 
 ***
+
+## bwtester
+
+The bandwidth testing application `bwtester` enables a variety of bandwidth tests on the SCION network. Installation and usage are described below. Documentation of the code and protocol are described in the bwtester's [README.md](https://github.com/perrig/scionlab/blob/master/bwtester/README.md).
+
+### bwtestclient
+
+To install bwtestclient:
+```shell
+go get github.com/perrig/scionlab/bwtester/bwtestclient
+```
+
+### bwtestserver
+
+To install bwtestserver:
+```shell
+go get github.com/perrig/scionlab/bwtester/bwtestserver
+```
+
+
+***
