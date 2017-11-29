@@ -106,10 +106,13 @@ func main() {
 		n, err = CCConn.WriteTo(sendPacketBuffer[:1], clientCCAddr)
 		Check(err)
 
-		// Wait for a very generous amount of time
-		time.Sleep(clientBwp.BwtestDuration + serverBwp.BwtestDuration + GracePeriod)
+		// Wait a generous amount of time
+		if clientBwp.BwtestDuration > serverBwp.BwtestDuration {
+			time.Sleep(clientBwp.BwtestDuration + GracePeriod)
+		} else {
+			time.Sleep(serverBwp.BwtestDuration + GracePeriod)
+		}
 		DCConn.Close()
 		Check(err)
-		fmt.Println("done sleeping, ready!")
 	}
 }
