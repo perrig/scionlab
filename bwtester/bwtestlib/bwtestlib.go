@@ -81,7 +81,11 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 	sb := make([]byte, bwp.PacketSize)
 	i := 0
 	t0 := time.Now()
-	interPktInterval := bwp.BwtestDuration / time.Duration(bwp.NumPackets)
+	if bwp.NumPackets > 1 {
+		interPktInterval := bwp.BwtestDuration / time.Duration(bwp.NumPackets-1)
+	} else {
+		interPktInterval := bwp.BwtestDuration
+	}
 	for i < bwp.NumPackets {
 		// Compute how long to wait
 		t1 := time.Now()

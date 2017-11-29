@@ -29,7 +29,7 @@ camera.annotate_foreground = Color( 'white' )
 while True:
     curtime = datetime.now()
     outstring = curtime.strftime('%Y/%m/%d %H:%M:%S')
-    filename = "/home/adrian/go/src/adrian/upstairs-" + curtime.strftime('%Y%m%d-%H:%M:%S') + ".jpg"
+    filename = "office-" + curtime.strftime('%Y%m%d-%H:%M:%S') + ".jpg"
     camera.annotate_text = outstring
 
     # camera.start_preview()

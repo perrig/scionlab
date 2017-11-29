@@ -8,12 +8,17 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/netsec-ethz/scion/go/lib/snet"
 	. "github.com/perrig/scionlab/bwtester/bwtestlib"
+)
+
+const (
+	DefaultBwtestParameters = "(5,1000,5)"
 )
 
 func prepareAESKey() []byte {
@@ -27,9 +32,34 @@ func prepareAESKey() []byte {
 }
 
 func printUsage() {
-	fmt.Println("imagefetcher -c ClientSCIONAddress -s ServerSCIONAddress")
+	fmt.Println("imagefetcher -c ClientSCIONAddress -s ServerSCIONAddress -cs (t,size,num) -sc (t,size,num)")
 	fmt.Println("The SCION address is specified as ISD-AS,[IP Address]:Port")
 	fmt.Println("Example SCION address 1-1011,[192.33.93.166]:42002")
+	fmt.Println("cs specifies (time duration (seconds), packet size (bytes), number of packets) of client->server test")
+	fmt.Println("sc specifies (time duration, packet size, number of packets) of server->client test")
+	fmt.Println("Default test parameters")
+}
+
+// Input format (time duration, packet size, number of packets), no spaces
+func parseBwtestParameters(s string) BwtestParameters {
+	re := regexp.MustCompile("[0-9]+")
+	a := re.FindAllString(s, -1)
+	if len(a) != 3 {
+		Check(fmt.Errorf("Incorrect number of arguments, need 3 values for bwtestparameters"))
+	}
+
+	a1, err := strconv.Atoi(a[0])
+	Check(err)
+	d := time.Second * time.Duration(a1)
+	if d > MaxDuration {
+		Check(fmt.Errorf("Duration is exceeding MaxDuration:", a1, ">", MaxDuration/time.Second))
+	}
+	a2, err := strconv.Atoi(a[1])
+	Check(err)
+	a3, err := strconv.Atoi(a[2])
+	Check(err)
+	key := prepareAESKey()
+	return BwtestParameters{d, a2, a3, key, 0}
 }
 
 func main() {
@@ -47,8 +77,6 @@ func main() {
 		// Control channel connection
 		CCConn *snet.Conn
 
-		// clientDCAddrStr string
-		// serverDCAddrStr string
 		// Address of client data channel (DC)
 		clientDCAddr *snet.Addr
 		// Address of server data channel (DC)
@@ -56,11 +84,18 @@ func main() {
 		// Data channel connection
 		DCConn *snet.Conn
 
+		clientBwpStr string
+		clientBwp    BwtestParameters
+		serverBwpStr string
+		serverBwp    BwtestParameters
+
 		err error
 	)
 
 	flag.StringVar(&clientCCAddrStr, "c", "", "Client SCION Address")
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
+	flag.StringVar(&serverBwpStr, "sc", DefaultBwtestParameters, "Server->Client test parameter")
+	flag.StringVar(&clientBwpStr, "cs", DefaultBwtestParameters, "Client->Server test parameter")
 
 	flag.Parse()
 
@@ -119,23 +154,15 @@ func main() {
 	// Data channel connection
 	DCConn, err = snet.DialSCION("udp4", clientDCAddr, serverDCAddr)
 	Check(err)
+
+	clientBwp = parseBwtestParameters(clientBwpStr)
+	clientBwp.Port = uint16(clientPort + 1)
+	serverBwp = parseBwtestParameters(serverBwpStr)
+	serverBwp.Port = uint16(serverPort + 1)
+	fmt.Println("Test parameters:")
 	fmt.Println("clientDCAddr -> serverDCAddr", clientDCAddr, "->", serverDCAddr)
-
-	// Prepare arguments
-	clientKey := prepareAESKey()
-	serverKey := prepareAESKey()
-
-	clientBwp := BwtestParameters{time.Second * 3,
-		100,
-		5,
-		clientKey,
-		uint16(clientPort + 1)}
-
-	serverBwp := BwtestParameters{time.Second * 3,
-		100,
-		5,
-		serverKey,
-		uint16(serverPort + 1)}
+	fmt.Printf("client->server: %d seconds, %d bytes, %d packets\n", int(clientBwp.BwtestDuration/time.Second), clientBwp.PacketSize, clientBwp.NumPackets)
+	fmt.Printf("server->client: %d seconds, %d bytes, %d packets\n", int(serverBwp.BwtestDuration/time.Second), serverBwp.PacketSize, serverBwp.NumPackets)
 
 	go HandleDCConnReceive(&serverBwp, DCConn)
 
@@ -148,11 +175,20 @@ func main() {
 	_, err = CCConn.Write(pktbuf[:l])
 	Check(err)
 
+	// Todo: set a Read deadline
 	n, err = CCConn.Read(pktbuf)
 	Check(err)
 
 	go HandleDCConnSend(&clientBwp, DCConn)
 
-	// Wait for a very generous amount of time
-	time.Sleep(clientBwp.BwtestDuration + serverBwp.BwtestDuration + GracePeriod)
+	// Wait a generous amount of time
+	if clientBwp.BwtestDuration > serverBwp.BwtestDuration {
+		fmt.Println("Sleeping for", clientBwp.BwtestDuration+GracePeriod)
+		time.Sleep(clientBwp.BwtestDuration + GracePeriod)
+	} else {
+		fmt.Println("Sleeping for", serverBwp.BwtestDuration+GracePeriod)
+		time.Sleep(serverBwp.BwtestDuration + GracePeriod)
+	}
+
+	// Fetch results from server
 }
