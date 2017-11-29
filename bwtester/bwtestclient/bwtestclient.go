@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	DefaultBwtestParameters = "(5,1000,5)"
+	DefaultBwtestParameters = "5,1000,5"
 )
 
 func prepareAESKey() []byte {
@@ -32,12 +32,12 @@ func prepareAESKey() []byte {
 }
 
 func printUsage() {
-	fmt.Println("imagefetcher -c ClientSCIONAddress -s ServerSCIONAddress -cs (t,size,num) -sc (t,size,num)")
+	fmt.Println("imagefetcher -c ClientSCIONAddress -s ServerSCIONAddress -cs t,size,num -sc t,size,num")
 	fmt.Println("The SCION address is specified as ISD-AS,[IP Address]:Port")
 	fmt.Println("Example SCION address 1-1011,[192.33.93.166]:42002")
-	fmt.Println("cs specifies (time duration (seconds), packet size (bytes), number of packets) of client->server test")
-	fmt.Println("sc specifies (time duration, packet size, number of packets) of server->client test")
-	fmt.Println("Default test parameters")
+	fmt.Println("cs specifies time duration (seconds), packet size (bytes), number of packets of client->server test")
+	fmt.Println("sc specifies time duration, packet size, number of packets of server->client test")
+	fmt.Println("Default test parameters", DefaultBwtestParameters )
 }
 
 // Input format (time duration, packet size, number of packets), no spaces
