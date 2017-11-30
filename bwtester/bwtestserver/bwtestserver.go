@@ -96,16 +96,33 @@ func main() {
 
 		// Data channel connection
 		DCConn, err := snet.DialSCION("udp4", serverDCAddr, clientDCAddr)
-		Check(err)
+		if err != nil {
+			// Ignore request, send back 0 to indicate error
+			sendPacketBuffer[0] = byte(0)
+			n, err = CCConn.WriteTo(sendPacketBuffer[:1], clientCCAddr)
+			// Ignore error
+			continue
+		}
 		fmt.Println("serverDCAddr -> clientDCAddr", serverDCAddr, "->", clientDCAddr)
 
-		go HandleDCConnReceive(clientBwp, DCConn)
+		resChan := make(chan BwtestResult)
+
+		go HandleDCConnReceive(clientBwp, DCConn, resChan)
 		go HandleDCConnSend(serverBwp, DCConn)
 
+		// Send back success
 		sendPacketBuffer[0] = byte(1)
 		n, err = CCConn.WriteTo(sendPacketBuffer[:1], clientCCAddr)
 		Check(err)
 
+		res := <-resChan
+
+		// Send back results
+		n = EncodeBwtestResult(&res, sendPacketBuffer)
+		n, err = CCConn.WriteTo(sendPacketBuffer[:n], clientCCAddr)
+		Check(err)
+
+		// Todo: adjust waiting time, only wait if necessary
 		// Wait a generous amount of time
 		if clientBwp.BwtestDuration > serverBwp.BwtestDuration {
 			time.Sleep(clientBwp.BwtestDuration + GracePeriod)

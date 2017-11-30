@@ -16,7 +16,8 @@ const (
 	// Maximum duration of a bandwidth test
 	MaxDuration time.Duration = time.Second * 10
 	// Maximum amount of time to wait for packet reception
-	GracePeriod time.Duration = time.Second * 3
+	GracePeriod     time.Duration = time.Second * 3
+	GracePeriodSend time.Duration = time.Second
 )
 
 type BwtestParameters struct {
@@ -25,6 +26,12 @@ type BwtestParameters struct {
 	NumPackets     int
 	PrgKey         []byte
 	Port           uint16
+}
+
+type BwtestResult struct {
+	NumPacketsReceived int
+	CorrectlyReceived  int
+	Duration           time.Duration
 }
 
 func Check(e error) {
@@ -56,6 +63,27 @@ func PrgFill(key []byte, iv int, data []byte) {
 	}
 }
 
+// Encode BwtestResult into a sufficiently large byte buffer that is passed in, return the number of bytes written
+func EncodeBwtestResult(res *BwtestResult, buf []byte) int {
+	var bb bytes.Buffer
+	enc := gob.NewEncoder(&bb)
+	err := enc.Encode(*res)
+	Check(err)
+	copy(buf, bb.Bytes())
+	return bb.Len()
+}
+
+// Decode BwtestResult from byte buffer that is passed in, returns BwtestResult structure and number of bytes consumed
+func DecodeBwtestResult(buf []byte) (*BwtestResult, int) {
+	bb := bytes.NewBuffer(buf)
+	is := bb.Len()
+	dec := gob.NewDecoder(bb)
+	var v BwtestResult
+	err := dec.Decode(&v)
+	Check(err)
+	return &v, is - bb.Len()
+}
+
 // Encode BwtestParameters into a sufficiently large byte buffer that is passed in, return the number of bytes written
 func EncodeBwtestParameters(bwtp *BwtestParameters, buf []byte) int {
 	var bb bytes.Buffer
@@ -81,6 +109,7 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 	sb := make([]byte, bwp.PacketSize)
 	i := 0
 	t0 := time.Now()
+	finish := t0.Add(bwp.BwtestDuration + GracePeriodSend)
 	var interPktInterval time.Duration
 	if bwp.NumPackets > 1 {
 		interPktInterval = bwp.BwtestDuration / time.Duration(bwp.NumPackets-1)
@@ -90,6 +119,10 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 	for i < bwp.NumPackets {
 		// Compute how long to wait
 		t1 := time.Now()
+		if t1.After(finish) {
+			// We've been sending for too long, sending bandwidth must be insufficient. Abort
+			return
+		}
 		t2 := t0.Add(interPktInterval * time.Duration(i))
 		if t1.Before(t2) {
 			time.Sleep(t2.Sub(t1))
@@ -110,7 +143,7 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 	}
 }
 
-func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn) {
+func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, resChan chan BwtestResult) {
 	t0 := time.Now()
 	finish := t0.Add(bwp.BwtestDuration + GracePeriod)
 	numPacketsReceived := 0
@@ -146,7 +179,6 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn) {
 			// fmt.Print("C")
 		}
 	}
-	fmt.Println("\nnumPacketsReceived:", numPacketsReceived)
-	fmt.Println("correctlyReceived:", correctlyReceived)
-	fmt.Println("Duration:", time.Now().Sub(t0))
+
+	resChan <- BwtestResult{numPacketsReceived, correctlyReceived, time.Now().Sub(t0)}
 }
