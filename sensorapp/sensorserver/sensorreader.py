@@ -13,7 +13,7 @@ MASTERBRICK1_UID = "5W4zM3"
 MASTERBRICK2_UID = "6JMWng"
 PIEZOSPEAKER_UID = "C8k"
 MOTIONDETECTOR_UID = "BRA"
-# HUMIDITY_UID = "Cdv"
+HUMIDITY_UID = "CXa"
 
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.bricklet_co2 import BrickletCO2
@@ -23,7 +23,7 @@ from tinkerforge.bricklet_temperature import Temperature
 from tinkerforge.bricklet_ambient_light import AmbientLight
 from tinkerforge.bricklet_uv_light import BrickletUVLight
 from tinkerforge.bricklet_motion_detector import BrickletMotionDetector
-# from tinkerforge.bricklet_humidity import Humidity
+from tinkerforge.bricklet_humidity import Humidity
 
 import time
 from datetime import datetime
@@ -31,7 +31,7 @@ from datetime import datetime
 if __name__ == "__main__":
     ipcon = IPConnection() # Create IP connection
     co2 = BrickletCO2(CO2_UID, ipcon) # Create device object
-    # humidity = Humidity(HUMIDITY_UID, ipcon)
+    humidity = Humidity(HUMIDITY_UID, ipcon)
     sound_intensity = SoundIntensity(SOUND_INTENSITY_UID, ipcon)
     dust_density = DustDetector( DUST_UID, ipcon)
     temperature = Temperature( TEMPERATURE_UID, ipcon)
@@ -67,8 +67,8 @@ if __name__ == "__main__":
         print( "Dust density: " + str(cur_dd))
 
         # Get current humidity level
-        # cur_humidity = humidity.get_humidity()/10.0
-        # print("Humidity: " + str(cur_humidity))
+        cur_humidity = humidity.get_humidity()/10.0
+        print("Humidity: " + str(cur_humidity))
 
         # Temperature
         cur_temp = temperature.get_temperature()/100.00

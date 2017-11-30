@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	DefaultBwtestParameters = "(5,1000,5)"
+	DefaultBwtestParameters = "5,1000,5"
 )
 
 func prepareAESKey() []byte {
@@ -32,12 +32,12 @@ func prepareAESKey() []byte {
 }
 
 func printUsage() {
-	fmt.Println("imagefetcher -c ClientSCIONAddress -s ServerSCIONAddress -cs (t,size,num) -sc (t,size,num)")
+	fmt.Println("imagefetcher -c ClientSCIONAddress -s ServerSCIONAddress -cs t,size,num -sc t,size,num")
 	fmt.Println("The SCION address is specified as ISD-AS,[IP Address]:Port")
 	fmt.Println("Example SCION address 1-1011,[192.33.93.166]:42002")
-	fmt.Println("cs specifies (time duration (seconds), packet size (bytes), number of packets) of client->server test")
-	fmt.Println("sc specifies (time duration, packet size, number of packets) of server->client test")
-	fmt.Println("Default test parameters")
+	fmt.Println("cs specifies time duration (seconds), packet size (bytes), number of packets of client->server test")
+	fmt.Println("sc specifies time duration, packet size, number of packets of server->client test")
+	fmt.Println("Default test parameters", DefaultBwtestParameters)
 }
 
 // Input format (time duration, packet size, number of packets), no spaces
@@ -164,7 +164,9 @@ func main() {
 	fmt.Printf("client->server: %d seconds, %d bytes, %d packets\n", int(clientBwp.BwtestDuration/time.Second), clientBwp.PacketSize, clientBwp.NumPackets)
 	fmt.Printf("server->client: %d seconds, %d bytes, %d packets\n", int(serverBwp.BwtestDuration/time.Second), serverBwp.PacketSize, serverBwp.NumPackets)
 
-	go HandleDCConnReceive(&serverBwp, DCConn)
+	resChan := make(chan BwtestResult)
+
+	go HandleDCConnReceive(&serverBwp, DCConn, resChan)
 
 	pktbuf := make([]byte, 2000)
 	n := EncodeBwtestParameters(&clientBwp, pktbuf)
@@ -179,16 +181,30 @@ func main() {
 	n, err = CCConn.Read(pktbuf)
 	Check(err)
 
-	go HandleDCConnSend(&clientBwp, DCConn)
-
-	// Wait a generous amount of time
-	if clientBwp.BwtestDuration > serverBwp.BwtestDuration {
-		fmt.Println("Sleeping for", clientBwp.BwtestDuration+GracePeriod)
-		time.Sleep(clientBwp.BwtestDuration + GracePeriod)
-	} else {
-		fmt.Println("Sleeping for", serverBwp.BwtestDuration+GracePeriod)
-		time.Sleep(serverBwp.BwtestDuration + GracePeriod)
+	if n != 1 && pktbuf[0] != byte(1) {
+		Check(fmt.Errorf("Error, did not receive success response from server. n=", n, "1st byte =", pktbuf[0]))
 	}
 
-	// Fetch results from server
+	go HandleDCConnSend(&clientBwp, DCConn)
+
+	res := <-resChan
+
+	fmt.Println("\nS->C results")
+	att := 8 * serverBwp.PacketSize * serverBwp.NumPackets / int(serverBwp.BwtestDuration/time.Second)
+	ach := 8 * serverBwp.PacketSize * res.CorrectlyReceived / int(serverBwp.BwtestDuration/time.Second)
+	fmt.Println("Attempted bandwidth:", att, "bps /", att/1000000, "Mbps")
+	fmt.Println("Achieved bandwidth:", ach, "bps / ", ach/1000000, "Mbps")
+	fmt.Println("Loss rate:", (serverBwp.NumPackets-res.CorrectlyReceived)/serverBwp.NumPackets, "%")
+
+	n, err = CCConn.Read(pktbuf)
+	Check(err)
+
+	sres, _ := DecodeBwtestResult(pktbuf)
+
+	fmt.Println("\nC->S results")
+	att = 8 * clientBwp.PacketSize * clientBwp.NumPackets / int(clientBwp.BwtestDuration/time.Second)
+	ach = 8 * clientBwp.PacketSize * sres.CorrectlyReceived / int(clientBwp.BwtestDuration/time.Second)
+	fmt.Println("Attempted bandwidth:", att, "bps /", att/1000000, "Mbps")
+	fmt.Println("Achieved bandwidth:", ach, "bps /", ach/1000000, "Mbps")
+	fmt.Println("Loss rate:", (clientBwp.NumPackets-sres.CorrectlyReceived)/clientBwp.NumPackets, "%")
 }
