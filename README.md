@@ -75,6 +75,12 @@ We use sensors from Tinkerforge, and the `sensorreader.py` Python application fe
 python3 ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorserver/sensorreader.py | sensorserver -s 1-6,[192.33.93.173]:42003 &
 ```
 
+If you do not have any sensors information you can report, then you can use a simple time application that reports the current time on your system:
+
+```shell
+python3 ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorserver/timereader.py | sensorserver -s 1-6,[192.33.93.173]:42003 &
+```
+
 ***
 
 ## bwtester
