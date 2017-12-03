@@ -75,6 +75,12 @@ We use sensors from Tinkerforge, and the `sensorreader.py` Python application fe
 python3 ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorserver/sensorreader.py | sensorserver -s 1-6,[192.33.93.173]:42003 &
 ```
 
+If you do not have any sensors information you can report, then you can use a simple time application that reports the current time on your system:
+
+```shell
+python3 ${GOPATH}/src/github.com/perrig/scionlab/sensorapp/sensorserver/timereader.py | sensorserver -s 1-6,[192.33.93.173]:42003 &
+```
+
 ***
 
 ## bwtester
@@ -88,6 +94,18 @@ To install bwtestclient:
 go get github.com/perrig/scionlab/bwtester/bwtestclient
 ```
 
+You can test the application as follows, replacing the client address with your own address after the `-c` option (you can select any available port number for the client):
+
+```shell
+bwtestclient -s 1-6,[192.33.93.173]:30100 -c 1-1006,[10.0.2.15]:30102
+```
+
+The application supports specification of the test duration (up to 10 seconds), the packet size to be used (at least 4 bytes), and the total number of packets that will be sent. For instance, `5,100,10` specifies that 10 packets of size 100 bytes will be sent over 5 seconds. The parameters for the test in the client-to-server direction are specified with `-cs`, and the server-to-client direction with `-sc`. So for instance to send 1 Mbps for 10 seconds from the client to the server, and 10 Mbps from the server to the client, you can use this command:
+
+```shell
+bwtestclient -s 1-6,[192.33.93.173]:30100 -c 1-1006,[10.0.2.15]:30102 -cs 10,1000,1250 -sc 10,1000,12500
+```
+
 ### bwtestserver
 
 To install bwtestserver:
@@ -95,5 +113,10 @@ To install bwtestserver:
 go get github.com/perrig/scionlab/bwtester/bwtestserver
 ```
 
+The server is started as follows, where the address needs to be adjusted as for other applications:
+
+```shell
+bwtestserver -s 1-6,[192.33.93.173]:30100 &
+```
 
 ***
