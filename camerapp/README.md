@@ -11,7 +11,7 @@ protocol, where the client simply re-fetches blocks it has not
 received. No reliability is implemented on the server side, it simply
 delivers image file names or file blocks upon request.
 
-## Data Format
+## Wireline data format
 
 List of commands:
 * L: lists image available for download

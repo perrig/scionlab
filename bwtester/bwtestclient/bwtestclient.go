@@ -5,12 +5,14 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"flag"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/netsec-ethz/scion/go/lib/snet"
@@ -42,6 +44,7 @@ func printUsage() {
 
 // Input format (time duration, packet size, number of packets), no spaces
 func parseBwtestParameters(s string) BwtestParameters {
+	// Since "-" is not part of the parse string, all numbers read are positive
 	re := regexp.MustCompile("[0-9]+")
 	a := re.FindAllString(s, -1)
 	if len(a) != 3 {
@@ -56,6 +59,12 @@ func parseBwtestParameters(s string) BwtestParameters {
 	}
 	a2, err := strconv.Atoi(a[1])
 	Check(err)
+	if a2 < MinPacketSize {
+		a2 = MinPacketSize
+	}
+	if a2 > MaxPacketSize {
+		a2 = MaxPacketSize
+	}
 	a3, err := strconv.Atoi(a[2])
 	Check(err)
 	key := prepareAESKey()
@@ -89,7 +98,8 @@ func main() {
 		serverBwpStr string
 		serverBwp    BwtestParameters
 
-		err error
+		err   error
+		tzero time.Time // initialized to "zero" time
 	)
 
 	flag.StringVar(&clientCCAddrStr, "c", "", "Client SCION Address")
@@ -120,7 +130,7 @@ func main() {
 	snet.Init(clientCCAddr.IA, sciondAddr, dispatcherAddr)
 	CCConn, err = snet.DialSCION("udp4", clientCCAddr, serverCCAddr)
 	Check(err)
-	fmt.Println("clientCCAddr -> serverCCAddr", clientCCAddr, "->", serverCCAddr)
+	// fmt.Println("clientCCAddr -> serverCCAddr", clientCCAddr, "->", serverCCAddr)
 
 	ci := strings.LastIndex(serverCCAddrStr, ":")
 	if ci < 0 {
@@ -130,8 +140,8 @@ func main() {
 	serverISDASIP = serverCCAddrStr[:ci]
 	serverPort, err = strconv.Atoi(serverCCAddrStr[ci+1:])
 	Check(err)
-	fmt.Println("serverISDASIP:", serverISDASIP)
-	fmt.Println("serverPort:", serverPort)
+	// fmt.Println("serverISDASIP:", serverISDASIP)
+	// fmt.Println("serverPort:", serverPort)
 
 	ci = strings.LastIndex(clientCCAddrStr, ":")
 	if ci < 0 {
@@ -141,8 +151,8 @@ func main() {
 	clientISDASIP = clientCCAddrStr[:ci]
 	clientPort, err = strconv.Atoi(clientCCAddrStr[ci+1:])
 	Check(err)
-	fmt.Println("clientISDASIP:", clientISDASIP)
-	fmt.Println("clientPort:", clientPort)
+	// fmt.Println("clientISDASIP:", clientISDASIP)
+	// fmt.Println("clientPort:", clientPort)
 
 	// Address of client data channel (DC)
 	clientDCAddr, err = snet.AddrFromString(clientISDASIP + ":" + strconv.Itoa(clientPort+1))
@@ -159,35 +169,93 @@ func main() {
 	clientBwp.Port = uint16(clientPort + 1)
 	serverBwp = parseBwtestParameters(serverBwpStr)
 	serverBwp.Port = uint16(serverPort + 1)
-	fmt.Println("Test parameters:")
+	fmt.Println("\nTest parameters:")
 	fmt.Println("clientDCAddr -> serverDCAddr", clientDCAddr, "->", serverDCAddr)
-	fmt.Printf("client->server: %d seconds, %d bytes, %d packets\n", int(clientBwp.BwtestDuration/time.Second), clientBwp.PacketSize, clientBwp.NumPackets)
-	fmt.Printf("server->client: %d seconds, %d bytes, %d packets\n", int(serverBwp.BwtestDuration/time.Second), serverBwp.PacketSize, serverBwp.NumPackets)
+	fmt.Printf("client->server: %d seconds, %d bytes, %d packets\n",
+		int(clientBwp.BwtestDuration/time.Second), clientBwp.PacketSize, clientBwp.NumPackets)
+	fmt.Printf("server->client: %d seconds, %d bytes, %d packets\n",
+		int(serverBwp.BwtestDuration/time.Second), serverBwp.PacketSize, serverBwp.NumPackets)
 
-	resChan := make(chan BwtestResult)
+	t := time.Now()
+	expFinishTimeSend := t.Add(serverBwp.BwtestDuration + MaxRTT)
+	expFinishTimeReceive := t.Add(clientBwp.BwtestDuration + StragglerWaitPeriod)
+	res := BwtestResult{-1, -1, clientBwp.PrgKey, expFinishTimeReceive}
+	var resLock sync.Mutex
+	if expFinishTimeReceive.Before(expFinishTimeSend) {
+		// The receiver will close the DC connection, so it will wait long enough until the
+		// sender is also done
+		res.ExpectedFinishTime = expFinishTimeSend
+	}
 
-	go HandleDCConnReceive(&serverBwp, DCConn, resChan)
+	go HandleDCConnReceive(&serverBwp, DCConn, &res, &resLock)
 
 	pktbuf := make([]byte, 2000)
-	n := EncodeBwtestParameters(&clientBwp, pktbuf)
-	l := n
-	n = EncodeBwtestParameters(&serverBwp, pktbuf[n:])
+	pktbuf[0] = 'N' // Request for new bwtest
+	n := EncodeBwtestParameters(&clientBwp, pktbuf[1:])
+	l := n + 1
+	n = EncodeBwtestParameters(&serverBwp, pktbuf[l:])
 	l = l + n
 
-	_, err = CCConn.Write(pktbuf[:l])
-	Check(err)
+	numtries := 0
+	for numtries < MaxTries {
+		_, err = CCConn.Write(pktbuf[:l])
+		Check(err)
 
-	// Todo: set a Read deadline
-	n, err = CCConn.Read(pktbuf)
-	Check(err)
+		err = CCConn.SetReadDeadline(time.Now().Add(MaxRTT))
+		Check(err)
+		n, err = CCConn.Read(pktbuf)
+		if err != nil {
+			numtries++
+			continue
+		}
+		// Remove read deadline
+		err = CCConn.SetReadDeadline(tzero)
+		Check(err)
 
-	if n != 1 && pktbuf[0] != byte(1) {
-		Check(fmt.Errorf("Error, did not receive success response from server. n=", n, "1st byte =", pktbuf[0]))
+		if n != 2 {
+			fmt.Println("Incorrect server response, trying again")
+			time.Sleep(Timeout)
+			numtries++
+			continue
+		}
+		if pktbuf[0] != 'N' {
+			fmt.Println("Incorrect server response, trying again")
+			time.Sleep(Timeout)
+			numtries++
+			continue
+		}
+		if pktbuf[1] != 0 {
+			// The server asks us to wait for some amount of time
+			time.Sleep(time.Second * time.Duration(int(pktbuf[1])))
+			// Don't increase numtries in this case
+			continue
+		}
+
+		// Everything was successful, exit the loop
+		break
 	}
 
 	go HandleDCConnSend(&clientBwp, DCConn)
 
-	res := <-resChan
+	// Wait until sender and receiver completed
+	// The reason we're not simply using a channel for synchronization is because the server
+	// needs to estimate for how long the test is still running when responding to new client
+	// requests. So we use the same mechanism here on the client side, although it is a bit
+	// more complex, see: https://github.com/perrig/scionlab/blob/master/bwtester/README.md
+	t = time.Now()
+	resLock.Lock()
+	eft := res.ExpectedFinishTime
+	resLock.Unlock()
+	for t.Before(eft) {
+		time.Sleep(eft.Sub(t))
+		// The reason that this is a loop is because res.ExpectedFinishTime is updated in the
+		// receive function when the first packet arrived. Thus, the ExpectedFinishTime may
+		// have gotten longer while it was sleeping
+		resLock.Lock()
+		eft = res.ExpectedFinishTime
+		resLock.Unlock()
+		t = time.Now()
+	}
 
 	fmt.Println("\nS->C results")
 	att := 8 * serverBwp.PacketSize * serverBwp.NumPackets / int(serverBwp.BwtestDuration/time.Second)
@@ -196,15 +264,70 @@ func main() {
 	fmt.Println("Achieved bandwidth:", ach, "bps / ", ach/1000000, "Mbps")
 	fmt.Println("Loss rate:", (serverBwp.NumPackets-res.CorrectlyReceived)/serverBwp.NumPackets, "%")
 
-	n, err = CCConn.Read(pktbuf)
-	Check(err)
+	// Fetch results from server
+	numtries = 0
+	for numtries < MaxTries {
+		pktbuf[0] = 'R'
+		copy(pktbuf[1:], clientBwp.PrgKey)
+		_, err = CCConn.Write(pktbuf[:1+len(clientBwp.PrgKey)])
+		Check(err)
 
-	sres, _ := DecodeBwtestResult(pktbuf)
+		err = CCConn.SetReadDeadline(time.Now().Add(MaxRTT))
+		Check(err)
+		n, err = CCConn.Read(pktbuf)
+		if err != nil {
+			numtries++
+			continue
+		}
+		// Remove read deadline
+		err = CCConn.SetReadDeadline(tzero)
+		Check(err)
 
-	fmt.Println("\nC->S results")
-	att = 8 * clientBwp.PacketSize * clientBwp.NumPackets / int(clientBwp.BwtestDuration/time.Second)
-	ach = 8 * clientBwp.PacketSize * sres.CorrectlyReceived / int(clientBwp.BwtestDuration/time.Second)
-	fmt.Println("Attempted bandwidth:", att, "bps /", att/1000000, "Mbps")
-	fmt.Println("Achieved bandwidth:", ach, "bps /", ach/1000000, "Mbps")
-	fmt.Println("Loss rate:", (clientBwp.NumPackets-sres.CorrectlyReceived)/clientBwp.NumPackets, "%")
+		if n < 2 {
+			numtries++
+			continue
+		}
+		if pktbuf[0] != 'R' {
+			numtries++
+			continue
+		}
+		if pktbuf[1] != byte(0) {
+			// Error case
+			if pktbuf[1] == byte(127) {
+				Check(fmt.Errorf("Results could not be found or PRG key was incorrect, abort"))
+			}
+			// pktbuf[1] contains number of seconds to wait for results
+			fmt.Println("We need to sleep for", pktbuf[1], "seconds before we can get the results")
+			time.Sleep(time.Duration(pktbuf[1]) * time.Second)
+			// We don't increment numtries as this was not a lost packet or other communication error
+			continue
+		}
+
+		sres, n1, err := DecodeBwtestResult(pktbuf[2:])
+		if err != nil {
+			fmt.Println("Decoding error, try again")
+			numtries++
+			continue
+		}
+		if n1+2 < n {
+			fmt.Println("Insufficient number of bytes received, try again")
+			time.Sleep(Timeout)
+			numtries++
+			continue
+		}
+		if !bytes.Equal(clientBwp.PrgKey, sres.PrgKey) {
+			fmt.Println("PRG Key returned from server incorrect, this should never happen")
+			numtries++
+			continue
+		}
+		fmt.Println("\nC->S results")
+		att = 8 * clientBwp.PacketSize * clientBwp.NumPackets / int(clientBwp.BwtestDuration/time.Second)
+		ach = 8 * clientBwp.PacketSize * sres.CorrectlyReceived / int(clientBwp.BwtestDuration/time.Second)
+		fmt.Println("Attempted bandwidth:", att, "bps /", att/1000000, "Mbps")
+		fmt.Println("Achieved bandwidth:", ach, "bps /", ach/1000000, "Mbps")
+		fmt.Println("Loss rate:", (clientBwp.NumPackets-sres.CorrectlyReceived)/clientBwp.NumPackets, "%")
+		return
+	}
+
+	fmt.Println("Error could not fetch server results, MaxTries attempted without success.")
 }
