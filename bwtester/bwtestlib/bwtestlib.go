@@ -18,15 +18,19 @@ const (
 	MaxDuration time.Duration = time.Second * 10
 	// Maximum amount of time to wait for straggler packets
 	StragglerWaitPeriod time.Duration = time.Second
+	// Allow sending beyond the finish time by this amount
+	GracePeriodSend time.Duration = time.Millisecond * 10
 	// Min packet size is 4 bytes, so that 32-bit integer fits in
 	// Ideally packet size > 4 bytes, so that part of the PRG is also in packet
 	MinPacketSize int = 4
 	// Max packet size to avoid allocation of too large a buffer, make it large enough for jumbo frames++
 	MaxPacketSize int = 66000
+	// Make sure the port number is a port the server application can connect to
+	MinPort uint16 = 1024
 
 	MaxTries int           = 3 // Number of times to try to reach server
 	Timeout  time.Duration = time.Millisecond * 500
-	MaxRTT   time.Duration = time.Second // Support at most an RTT of 1 second
+	MaxRTT   time.Duration = time.Millisecond * 1000
 )
 
 type BwtestParameters struct {
@@ -124,6 +128,9 @@ func DecodeBwtestParameters(buf []byte) (*BwtestParameters, int, error) {
 	if v.PacketSize > MaxPacketSize {
 		v.PacketSize = MaxPacketSize
 	}
+	if v.Port < MinPort {
+		v.Port = MinPort
+	}
 	return &v, is - bb.Len(), err
 }
 
@@ -131,7 +138,7 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 	sb := make([]byte, bwp.PacketSize)
 	i := 0
 	t0 := time.Now()
-	finish := t0.Add(bwp.BwtestDuration)
+	finish := t0.Add(bwp.BwtestDuration + GracePeriodSend)
 	var interPktInterval time.Duration
 	if bwp.NumPackets > 1 {
 		interPktInterval = bwp.BwtestDuration / time.Duration(bwp.NumPackets-1)
@@ -142,15 +149,12 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 		// Compute how long to wait
 		t1 := time.Now()
 		if t1.After(finish) {
-			// We've been sending for too long, sending bandwidth must be insufficient. Abort
+			// We've been sending for too long, sending bandwidth must be insufficient. Abort sending.
 			return
 		}
 		t2 := t0.Add(interPktInterval * time.Duration(i))
 		if t1.Before(t2) {
 			time.Sleep(t2.Sub(t1))
-		} else {
-			// We're running a bit behind, sending bandwidth may be insufficient
-			// fmt.Println("\nBehind:", t2.Sub(t1))
 		}
 		// Send packet now
 		PrgFill(bwp.PrgKey, i*bwp.PacketSize, sb)
@@ -179,10 +183,16 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 		n, _, err := udpConnection.ReadFrom(recBuf)
 		// Ignore errors, todo: detect type of error and quit if it was because of a SetReadDeadline
 		if err != nil {
+			// If the ReadDeadline expired, then we should extend the finish time, which is
+			// extended on the client side if no response is received from the server. On the server
+			// side, however, a short BwtestDuration with several consecutive packet losses would
+			// lead to closing the connection.
+			resLock.Lock()
+			finish = res.ExpectedFinishTime
+			resLock.Unlock()
 			continue
 		}
 		numPacketsReceived++
-		// fmt.Print(".")
 		if n != bwp.PacketSize {
 			// The packet has incorrect size, do not count as a correct packet
 			fmt.Println("Incorrect size.", n, "bytes instead of", bwp.PacketSize)
@@ -203,17 +213,20 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 				// Note that we should check that we're not too far away from the beginning of the
 				// bwtest, otherwise we're extending the time for too long. If the server's ack packet
 				// was not dropped, then sending should start within MaxRTT at most.
-				finish = time.Now().Add(bwp.BwtestDuration + StragglerWaitPeriod)
-				_ = udpConnection.SetReadDeadline(finish)
-				resLock.Lock()
-				if res.ExpectedFinishTime.Before(finish) {
-					// Most likely what happened is that the server's ack packet got dropped (in case this
-					// is the receiver on the server side) or the client's request packet got dropped (in
-					// case this is the receiver on the client side). In these cases the ExpectedFinishTime
-					// needs to be updated
-					res.ExpectedFinishTime = finish
+				newFinish := time.Now().Add(bwp.BwtestDuration + StragglerWaitPeriod)
+				if newFinish.After(finish) {
+					finish = newFinish
+					_ = udpConnection.SetReadDeadline(finish)
+					resLock.Lock()
+					if res.ExpectedFinishTime.Before(finish) {
+						// Most likely what happened is that the server's ack packet got dropped (in case this
+						// is the receiver on the server side) or the client's request packet got dropped (in
+						// case this is the receiver on the client side). In these cases the ExpectedFinishTime
+						// needs to be updated
+						res.ExpectedFinishTime = finish
+					}
+					resLock.Unlock()
 				}
-				resLock.Unlock()
 			}
 			correctlyReceived++
 		}
