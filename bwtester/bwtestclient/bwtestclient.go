@@ -34,7 +34,7 @@ func prepareAESKey() []byte {
 }
 
 func printUsage() {
-	fmt.Println("imagefetcher -c ClientSCIONAddress -s ServerSCIONAddress -cs t,size,num -sc t,size,num")
+	fmt.Println("bwtestclient -c ClientSCIONAddress -s ServerSCIONAddress -cs t,size,num -sc t,size,num")
 	fmt.Println("The SCION address is specified as ISD-AS,[IP Address]:Port")
 	fmt.Println("Example SCION address 1-1011,[192.33.93.166]:42002")
 	fmt.Println("cs specifies time duration (seconds), packet size (bytes), number of packets of client->server test")
