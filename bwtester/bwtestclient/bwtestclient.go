@@ -177,8 +177,8 @@ func main() {
 		int(serverBwp.BwtestDuration/time.Second), serverBwp.PacketSize, serverBwp.NumPackets)
 
 	t := time.Now()
-	expFinishTimeSend := t.Add(serverBwp.BwtestDuration + MaxRTT)
-	expFinishTimeReceive := t.Add(clientBwp.BwtestDuration + StragglerWaitPeriod)
+	expFinishTimeSend := t.Add(serverBwp.BwtestDuration + MaxRTT + GracePeriodSend)
+	expFinishTimeReceive := t.Add(clientBwp.BwtestDuration + MaxRTT + StragglerWaitPeriod)
 	res := BwtestResult{-1, -1, clientBwp.PrgKey, expFinishTimeReceive}
 	var resLock sync.Mutex
 	if expFinishTimeReceive.Before(expFinishTimeSend) {
@@ -205,6 +205,14 @@ func main() {
 		Check(err)
 		n, err = CCConn.Read(pktbuf)
 		if err != nil {
+			// A timeout likely happened, see if we should adjust the expected finishing time
+			expFinishTimeReceive = time.Now().Add(clientBwp.BwtestDuration + MaxRTT + StragglerWaitPeriod)
+			resLock.Lock()
+			if res.ExpectedFinishTime.Before(expFinishTimeReceive) {
+				res.ExpectedFinishTime = expFinishTimeReceive
+			}
+			resLock.Unlock()
+
 			numtries++
 			continue
 		}
@@ -233,6 +241,10 @@ func main() {
 
 		// Everything was successful, exit the loop
 		break
+	}
+
+	if numtries == MaxTries {
+		Check(fmt.Errorf("Error, could not receive a server response, MaxTries attempted without success."))
 	}
 
 	go HandleDCConnSend(&clientBwp, DCConn)
@@ -329,5 +341,5 @@ func main() {
 		return
 	}
 
-	fmt.Println("Error could not fetch server results, MaxTries attempted without success.")
+	fmt.Println("Error, could not fetch server results, MaxTries attempted without success.")
 }

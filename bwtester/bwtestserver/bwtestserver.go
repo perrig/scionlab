@@ -200,9 +200,9 @@ func main() {
 				// Ignore error
 				continue
 			}
-			// fmt.Println("serverDCAddr -> clientDCAddr", serverDCAddr, "->", clientDCAddr)
 
-			expFinishTimeSend := t.Add(serverBwp.BwtestDuration) // Nothing needs to be added, since sending starts right away
+			// Nothing needs to be added to account for network delay, since sending starts right away
+			expFinishTimeSend := t.Add(serverBwp.BwtestDuration + GracePeriodSend)
 			expFinishTimeReceive := t.Add(clientBwp.BwtestDuration + StragglerWaitPeriod)
 			// We use resultsMapLock also for the bres variable
 			bres := BwtestResult{-1, -1, clientBwp.PrgKey, expFinishTimeReceive}
