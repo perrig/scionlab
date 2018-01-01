@@ -28,7 +28,7 @@ const (
 	// Make sure the port number is a port the server application can connect to
 	MinPort uint16 = 1024
 
-	MaxTries int           = 3 // Number of times to try to reach server
+	MaxTries int           = 5 // Number of times to try to reach server
 	Timeout  time.Duration = time.Millisecond * 500
 	MaxRTT   time.Duration = time.Millisecond * 1000
 )
@@ -169,7 +169,7 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 	}
 }
 
-func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *BwtestResult, resLock *sync.Mutex) {
+func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *BwtestResult, resLock *sync.Mutex, done *sync.Mutex) {
 	resLock.Lock()
 	finish := res.ExpectedFinishTime
 	resLock.Unlock()
@@ -195,7 +195,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 		numPacketsReceived++
 		if n != bwp.PacketSize {
 			// The packet has incorrect size, do not count as a correct packet
-			fmt.Println("Incorrect size.", n, "bytes instead of", bwp.PacketSize)
+			// fmt.Println("Incorrect size.", n, "bytes instead of", bwp.PacketSize)
 			continue
 		}
 		// Could consider pre-computing all the packets in a separate goroutine
@@ -211,17 +211,17 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 			if correctlyReceived == 0 {
 				// Adjust finish time after first correctly received packet
 				// Note that we should check that we're not too far away from the beginning of the
-				// bwtest, otherwise we're extending the time for too long. If the server's ack packet
-				// was not dropped, then sending should start within MaxRTT at most.
+				// bwtest, otherwise we're extending the time for too long. If the server's 'N' response
+				// packet was not dropped, then sending should start within MaxRTT at most.
 				newFinish := time.Now().Add(bwp.BwtestDuration + StragglerWaitPeriod)
 				if newFinish.After(finish) {
 					finish = newFinish
 					_ = udpConnection.SetReadDeadline(finish)
 					resLock.Lock()
 					if res.ExpectedFinishTime.Before(finish) {
-						// Most likely what happened is that the server's ack packet got dropped (in case this
-						// is the receiver on the server side) or the client's request packet got dropped (in
-						// case this is the receiver on the client side). In these cases the ExpectedFinishTime
+						// Most likely what happened is that the server's 'N' response packet got dropped (in case this
+						// is the receive function on the server side) or the client's request packet got dropped (in
+						// case this is the receive function on the client side). In both cases the ExpectedFinishTime
 						// needs to be updated
 						res.ExpectedFinishTime = finish
 					}
@@ -236,11 +236,15 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 	res.NumPacketsReceived = numPacketsReceived
 	res.CorrectlyReceived = correctlyReceived
 
-	// We're done here, let's see if we need to wait for the sender to complete so we can close the connection
+	// We're done here, let's see if we need to wait for the send function to complete so we can close the connection
 	// Note: the locking here is not strictly necessary, since ExpectedFinishTime is only updated right after
 	// initialization and in the code above, but it's good practice to do always lock when using the variable
 	eft := res.ExpectedFinishTime
 	resLock.Unlock()
+	if done != nil {
+		// Signal that we're done
+		done.Unlock()
+	}
 	if time.Now().Before(eft) {
 		time.Sleep(eft.Sub(time.Now()))
 	}
