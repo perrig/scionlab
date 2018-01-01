@@ -216,7 +216,7 @@ func main() {
 			resultsMapLock.Unlock()
 
 			// go HandleDCConnReceive(clientBwp, DCConn, resChan)
-			go HandleDCConnReceive(clientBwp, DCConn, &bres, &resultsMapLock)
+			go HandleDCConnReceive(clientBwp, DCConn, &bres, &resultsMapLock, nil)
 			go HandleDCConnSend(serverBwp, DCConn)
 
 			// Send back success

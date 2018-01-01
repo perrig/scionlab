@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	DefaultBwtestParameters = "5,1000,5"
+	DefaultBwtestParameters = "3,1000,30"
+	GracePeriodSync time.Duration = time.Millisecond * 10
 )
 
 func prepareAESKey() []byte {
@@ -100,6 +101,8 @@ func main() {
 
 		err   error
 		tzero time.Time // initialized to "zero" time
+
+		receiveDone sync.Mutex // used to signal when the HandleDCConnReceive goroutine has completed
 	)
 
 	flag.StringVar(&clientCCAddrStr, "c", "", "Client SCION Address")
@@ -187,7 +190,8 @@ func main() {
 		res.ExpectedFinishTime = expFinishTimeSend
 	}
 
-	go HandleDCConnReceive(&serverBwp, DCConn, &res, &resLock)
+	receiveDone.Lock()
+	go HandleDCConnReceive(&serverBwp, DCConn, &res, &resLock, &receiveDone)
 
 	pktbuf := make([]byte, 2000)
 	pktbuf[0] = 'N' // Request for new bwtest
@@ -249,32 +253,14 @@ func main() {
 
 	go HandleDCConnSend(&clientBwp, DCConn)
 
-	// Wait until sender and receiver completed
-	// The reason we're not simply using a channel for synchronization is because the server
-	// needs to estimate for how long the test is still running when responding to new client
-	// requests. So we use the same mechanism here on the client side, although it is a bit
-	// more complex, see: https://github.com/perrig/scionlab/blob/master/bwtester/README.md
-	t = time.Now()
-	resLock.Lock()
-	eft := res.ExpectedFinishTime
-	resLock.Unlock()
-	for t.Before(eft) {
-		time.Sleep(eft.Sub(t))
-		// The reason that this is a loop is because res.ExpectedFinishTime is updated in the
-		// receive function when the first packet arrived. Thus, the ExpectedFinishTime may
-		// have gotten longer while it was sleeping
-		resLock.Lock()
-		eft = res.ExpectedFinishTime
-		resLock.Unlock()
-		t = time.Now()
-	}
+	receiveDone.Lock()
 
 	fmt.Println("\nS->C results")
 	att := 8 * serverBwp.PacketSize * serverBwp.NumPackets / int(serverBwp.BwtestDuration/time.Second)
 	ach := 8 * serverBwp.PacketSize * res.CorrectlyReceived / int(serverBwp.BwtestDuration/time.Second)
 	fmt.Println("Attempted bandwidth:", att, "bps /", att/1000000, "Mbps")
 	fmt.Println("Achieved bandwidth:", ach, "bps / ", ach/1000000, "Mbps")
-	fmt.Println("Loss rate:", (serverBwp.NumPackets-res.CorrectlyReceived)/serverBwp.NumPackets, "%")
+	fmt.Println("Loss rate:", (serverBwp.NumPackets-res.CorrectlyReceived)*100/serverBwp.NumPackets, "%")
 
 	// Fetch results from server
 	numtries = 0
@@ -337,7 +323,7 @@ func main() {
 		ach = 8 * clientBwp.PacketSize * sres.CorrectlyReceived / int(clientBwp.BwtestDuration/time.Second)
 		fmt.Println("Attempted bandwidth:", att, "bps /", att/1000000, "Mbps")
 		fmt.Println("Achieved bandwidth:", ach, "bps /", ach/1000000, "Mbps")
-		fmt.Println("Loss rate:", (clientBwp.NumPackets-sres.CorrectlyReceived)/clientBwp.NumPackets, "%")
+		fmt.Println("Loss rate:", (clientBwp.NumPackets-sres.CorrectlyReceived)*100/clientBwp.NumPackets, "%")
 		return
 	}
 
