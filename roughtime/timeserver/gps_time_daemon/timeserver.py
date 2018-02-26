@@ -21,13 +21,10 @@ class GpsLocation:
         self.ew = ew
 
 class TimeServer:
-    HOST = "localhost"
-    PORT = 4223
-
     GPS_UPDATE_PERIOD = 5000
     RTC_UPDATE_PERIOD = 1000
 
-    def __init__(self):
+    def __init__(self, host, port):
         # Available devices that we use
         self.gps = None
         self.rtc = None
@@ -38,13 +35,12 @@ class TimeServer:
         self.last_gps_time = None
         self.last_gps_position = None
 
-
         self.ipcon = IPConnection() 
         self.ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, 
                                      self.cb_enumerate)
         self.ipcon.register_callback(IPConnection.CALLBACK_CONNECTED, 
                                      self.cb_connected)
-        self.ipcon.connect(TimeServer.HOST, TimeServer.PORT) 
+        self.ipcon.connect(host, int(port))
         self.ipcon.enumerate()
 
     def cb_enumerate(self, uid, connected_uid, position, hardware_version, 
@@ -113,12 +109,13 @@ class TimeServer:
             self.oled.write_line(0, 2, "RTC Time: %02d:%02d:%02d.%02d" % (hour, minute, second, centisecond))
             self.oled.write_line(1, 2, "RTC Date: %02d.%02d.%d" % (day, month, year))
 
-            self.get_current_time()
-
     def get_current_time(self):
         if self.rtc:
             year, month, day, hour, minute, second, centisecond, weekday = self.rtc.get_date_time()
-            dt = datetime(year, month, day, hour, minute, second, microsecond=centisecond*10000, tzinfo=from_zone)
+            dt = datetime(year, month, day, hour, minute, second, 0, tzinfo=from_zone)
 
-            return dt
+            timestamp = (calendar.timegm(dt.timetuple()) * 1000 )+(centisecond*10)  # I'm not sure if this is the best way
 
+            return timestamp
+        else:
+            return 0

@@ -50,8 +50,10 @@ func main(){
     checkErr("Loading chain file", err)
 
     //TODO: Check if number of servers is enough for quorum
+    quorum := 3
+
     var client lib.Client
-    result, err := client.EstablishTime(chain, len(servers), servers, cAddr)
+    result, err := client.EstablishTime(chain, quorum, servers, cAddr)
     checkErr("Establishing time", err)
 
     for serverName, err := range result.ServerErrors {
@@ -59,11 +61,15 @@ func main(){
     }
 
     if result.MonoUTCDelta == nil {
-        fmt.Fprintf(os.Stderr, "Failed to get %d servers to agree on the time.\n", len(servers))
+        fmt.Fprintf(os.Stderr, "Failed to get %d servers to agree on the time.\n", quorum)
     } else {
         nowUTC := time.Unix(0, int64(monotime.Now()+*result.MonoUTCDelta))
         nowRealTime := time.Now()
 
         fmt.Printf("real-time delta: %s\n", nowRealTime.Sub(nowUTC))
+        fmt.Printf("Obtained midpoint time is: %s \n", time.Unix(0, result.Midpoint.Int64()))
     }
+
+    err = utils.SaveChain(*chainFile, chain, *maxChainSize)
+    checkErr("Saving chain file", err)
 }

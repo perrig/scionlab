@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"os"
-	"fmt"
     "crypto/rand"
     "time"
 
@@ -27,6 +26,7 @@ var (
 	runCommand             = app.Command("run", "Run roughtime server")
 	inputKeyFile    = runCommand.Arg("private_key", "Name of a file containing private key").Default("private.key").String()
 	inputConfigFile = runCommand.Arg("config_file", "Name of configuration file with server config").Default("config.json").String()
+	gpsTimeDaemon =   runCommand.Flag("gps_timed", "Unix socket location of time daemon").String()
 )
 
 func checkErr(action string, err error){
@@ -57,11 +57,11 @@ func runServers(configurationFile, privateKeyFile string){
 
 	for _, addr := range serverConfig.Addresses{
 		//TODO: run in goroutine
-		serveRequests(addr.Address, addr.Protocol, privateKey)
+		serveRequests(addr.Address, addr.Protocol, *gpsTimeDaemon, privateKey)
 	}
 }
 
-func serveRequests(bindAddress, connectionProtocol string, privateKey []byte){
+func serveRequests(bindAddress, connectionProtocol, timedLocation string, privateKey []byte){
 	sAddr, err := utils.InitSCIONConnection(bindAddress)
 	checkErr("Initializing SCION connection", err)
 
@@ -98,9 +98,17 @@ func serveRequests(bindAddress, connectionProtocol string, privateKey []byte){
 			continue
 		}
 
-		midpoint := uint64(time.Now().UnixNano() / 1000)
+		var midpoint uint64
+		if(timedLocation!=""){
+			log.Printf("Using GPS time as result")
+			midpoint, err = GetTime(timedLocation)
+			midpoint=midpoint*1000
+			checkErr("Reading GPS time", err)
+		}else{
+			log.Printf("Using local time as result")
+			midpoint = uint64(time.Now().UnixNano() / 1000)	
+		}
 		radius := uint32(1000000)
-		fmt.Printf("Timestamp: %d ", midpoint)
 
 		replies, err := protocol.CreateReplies([][]byte{nonce}, midpoint, radius, cert, onlinePrivateKey)
 		if err != nil {

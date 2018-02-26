@@ -8,7 +8,6 @@ import (
     "io"
     "net"
     "time"
-    "log"
 
     "math/big"
     mathrand "math/rand"
@@ -182,8 +181,6 @@ func (c *Client) query(server *config.Server, chain *config.Chain, localAddr *sn
         prevReply = chain.Links[len(chain.Links)-1].Reply
     }
 
-    log.Printf("Query!")
-
     var baseTime, replyTime time.Duration
     var reply []byte
     var nonce, blind [protocol.NonceSize]byte
@@ -202,8 +199,6 @@ func (c *Client) query(server *config.Server, chain *config.Chain, localAddr *sn
         if err != nil {
             return nil, err
         }
-
-        log.Printf("Query server %s", serverAddr.String())
 
         conn, err := snet.DialSCION("udp4" /*Change to read this from config */, localAddr ,serverAddr)
         if err != nil {
@@ -377,6 +372,9 @@ type TimeResult struct {
     // significantly incorrect time, as defined by MaxDifference. In this
     // case, the reply will have been recorded in the chain.
     OutOfRangeAnswer bool
+
+    // Overlapping midpoint time from server replies
+    Midpoint *big.Int
 }
 
 // ServerInfo contains information from a specific server.
@@ -393,7 +391,7 @@ type ServerInfo struct {
 // EstablishTime queries a number of servers until it has a quorum of
 // overlapping results, or it runs out of servers. Results from the querying
 // the servers are appended to chain.
-// TODO: Save local snet addr in Client object
+// TODO: Save local snet addr in Client object, remove from arguments
 func (c *Client) EstablishTime(chain *config.Chain, quorum int, servers []config.Server, localAddr *snet.Addr) (TimeResult, error) {
     perm := c.permutation(len(servers))
     var samples []*timeSample
@@ -457,6 +455,7 @@ func (c *Client) EstablishTime(chain *config.Chain, quorum int, servers []config
     }
     monoUTCDelta := time.Duration(delta.Int64())
     result.MonoUTCDelta = &monoUTCDelta
+    result.Midpoint = midpoint
 
     return result, nil
 }
