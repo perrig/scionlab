@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/netsec-ethz/scion/go/lib/snet"
+	"github.com/scionproto/scion/go/lib/snet"
 	. "github.com/perrig/scionlab/bwtester/bwtestlib"
 )
 
