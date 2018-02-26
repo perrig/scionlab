@@ -398,9 +398,15 @@ func (c *Client) EstablishTime(chain *config.Chain, quorum int, servers []config
     var intersection *timeSample
     var result TimeResult
 
+    var portOffset uint16 = 0
+
     for len(perm) > 0 {
         server := &servers[perm[0]]
         perm = perm[1:]
+
+        // TODO: Check if its really necessary to change client ports
+        localAddr.L4Port = localAddr.L4Port + portOffset
+        portOffset=portOffset+1
 
         sample, err := c.query(server, chain, localAddr)
         if err != nil {

@@ -35,7 +35,9 @@ func checkErr(action string, err error){
 func main(){
     app.Parse(os.Args[1:])
 
-    //TODO: Check arguments, if everything is in place
+    if(*clientAddress==""){
+        log.Panicf("You must provide client address as parameter")
+    }
 
     log.Printf("Client address: %s", *clientAddress)
     cAddr, err := utils.InitSCIONConnection(*clientAddress)
@@ -49,8 +51,11 @@ func main(){
     chain, err := utils.LoadChain(*chainFile)
     checkErr("Loading chain file", err)
 
-    //TODO: Check if number of servers is enough for quorum
-    quorum := 3
+    quorum := defaultServerQuorum
+    if quorum > len(servers) {
+        log.Printf("Quorum set to %d servers because not enough valid servers were found to meet the default (%d)!\n", len(servers), quorum)
+        quorum = len(servers)
+    }
 
     var client lib.Client
     result, err := client.EstablishTime(chain, quorum, servers, cAddr)
@@ -61,12 +66,12 @@ func main(){
     }
 
     if result.MonoUTCDelta == nil {
-        fmt.Fprintf(os.Stderr, "Failed to get %d servers to agree on the time.\n", quorum)
+        log.Printf("Failed to get %d servers to agree on the time.\n", quorum)
     } else {
         nowUTC := time.Unix(0, int64(monotime.Now()+*result.MonoUTCDelta))
         nowRealTime := time.Now()
 
-        fmt.Printf("real-time delta: %s\n", nowRealTime.Sub(nowUTC))
+        fmt.Printf("Real-time delta: %s\n", nowRealTime.Sub(nowUTC))
         fmt.Printf("Obtained midpoint time is: %s \n", time.Unix(0, result.Midpoint.Int64()))
     }
 
