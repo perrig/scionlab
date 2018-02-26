@@ -15,19 +15,19 @@ func getDispatcherAddr(scionAddr *snet.Addr)(string){
     return "/run/shm/dispatcher/default.sock"
 }
 
-func InitSCIONConnection(serverAddress string)(*snet.Addr, error){
+func InitSCIONConnection(scionAddressString string)(*snet.Addr, error){
     log.Println("Initializing SCION connection")
 
-    serverCCAddr, err := snet.AddrFromString(serverAddress)
+    scionAddress, err := snet.AddrFromString(scionAddressString)
     if err != nil {
         return nil, err
     }
 
-    err = snet.Init(serverCCAddr.IA, getSciondAddr(serverCCAddr), getDispatcherAddr(serverCCAddr))
+    err = snet.Init(scionAddress.IA, getSciondAddr(scionAddress), getDispatcherAddr(scionAddress))
     if err != nil {
-        return serverCCAddr, err
+        return scionAddress, err
     }
 
-    return serverCCAddr, nil
+    return scionAddress, nil
 }
 

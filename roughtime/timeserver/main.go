@@ -8,7 +8,7 @@ import (
     "time"
 
     "golang.org/x/crypto/ed25519"
-	"github.com/perrig/scionlab/roughtime/timeserver/utils"
+	"github.com/perrig/scionlab/roughtime/utils"
 	"github.com/scionproto/scion/go/lib/snet"
 	"roughtime.googlesource.com/go/protocol"
 
@@ -20,9 +20,9 @@ var (
 
 	configCommand           = app.Command("configure", "Generate server configuration files")
 	serverAddress    = configCommand.Arg("address", "Server's SCION address").Required().String()
-	outputKeyFile    = configCommand.Arg("private_key", "Name of a file where private key will be stored").Default("private.key").String()
-	outputConfigFile = configCommand.Arg("config_file", "Name of configuration file where server details will be stored").Default("config.json").String()
-	serverName       = configCommand.Arg("name", "Server name").String()
+	outputKeyFile    = configCommand.Flag("private_key", "Name of a file where private key will be stored").Default("private.key").String()
+	outputConfigFile = configCommand.Flag("config_file", "Name of configuration file where server details will be stored").Default("config.json").String()
+	serverName       = configCommand.Flag("name", "Server name").String()
 	
 	runCommand             = app.Command("run", "Run roughtime server")
 	inputKeyFile    = runCommand.Arg("private_key", "Name of a file containing private key").Default("private.key").String()
@@ -55,7 +55,7 @@ func runServers(configurationFile, privateKeyFile string){
 	privateKey, err := utils.ReadPrivateKey(privateKeyFile)
 	checkErr("Loading private key", err)
 
-	for _, addr := range(serverConfig.Addresses){
+	for _, addr := range serverConfig.Addresses{
 		//TODO: run in goroutine
 		serveRequests(addr.Address, addr.Protocol, privateKey)
 	}
