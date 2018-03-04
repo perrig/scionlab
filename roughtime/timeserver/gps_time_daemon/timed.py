@@ -23,7 +23,6 @@ def ServeRequests(socketFile, timeServer):
         finally:
             connection.close()
 
-
 if __name__ == "__main__":
     
     try:
