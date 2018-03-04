@@ -33,17 +33,13 @@ func checkErr(action string, err error){
 }
 
 func main(){
-    app.Parse(os.Args[1:])
-
-    if(*clientAddress==""){
-        log.Panicf("You must provide client address as parameter")
-    }
-
-    log.Printf("Client address: %s", *clientAddress)
+    kingpin.MustParse(app.Parse(os.Args[1:]))
     cAddr, err := utils.InitSCIONConnection(*clientAddress)
     checkErr("Init SCION", err)
 
-    log.Printf("Scion address is %s", cAddr.String())
+    if cAddr.L4Port != 0{
+        log.Panicf("Application port must be set to 0, currently its %d", cAddr.L4Port)
+    }
 
     servers, err := utils.LoadServersConfigurationList(*serversFile)
     checkErr("Loading server file", err)
