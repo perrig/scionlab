@@ -1,6 +1,7 @@
 import threading
 import ntplib
 from time import ctime
+from datetime import datetime
 
 def query_ntp_server(server_url, request_timeout, result_handler):
     client = ntplib.NTPClient()
@@ -29,6 +30,7 @@ class TimeResult:
         return self._find_max_window_time(times)
 
     def _find_max_window_time(self, obtained_times):
+        """ We take time that has largest number of occurrences, within delta """
         if len(obtained_times)==0:
             return 0, 0
 
@@ -61,6 +63,7 @@ class NTPTimeSource:
         self.timeout=request_timeout
 
     def get_ntp_time(self):
+        """ Query all ntp servers in different threads, take the time that has most occurrences """
         response=TimeResult()
         workers=[]
 
@@ -72,8 +75,8 @@ class NTPTimeSource:
         for worker in workers:
             worker.join()
 
-        return response.get_time()
-
+        timestamp, server_num = response.get_time()
+        return datetime.fromtimestamp(timestamp), server_num
 
 if __name__ == "__main__":
 
@@ -81,6 +84,4 @@ if __name__ == "__main__":
 
     ntp_source=NTPTimeSource(ntp_servers, 5)
     t, server_num = ntp_source.get_ntp_time()
-    print("%d out of %d servers agree on time" %(server_num, len(ntp_servers)))
-    print(ctime(t))
-
+    print(t)

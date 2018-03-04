@@ -11,7 +11,7 @@ from tinkerforge.bricklet_gps_v2 import BrickletGPSV2
 from tinkerforge.bricklet_oled_128x64 import BrickletOLED128x64
 from tinkerforge.bricklet_real_time_clock import BrickletRealTimeClock
 
-from_zone = tz.tzutc()
+utc_zone = tz.tzutc()
 
 class GpsLocation:
     def __init__(self, latitude, ns, longitude, ew):
@@ -20,7 +20,7 @@ class GpsLocation:
         self.ns = ns
         self.ew = ew
 
-class TimeServer:
+class HardwareTimeSource:
     GPS_UPDATE_PERIOD = 5000
     RTC_UPDATE_PERIOD = 1000
 
@@ -29,7 +29,6 @@ class TimeServer:
         self.gps = None
         self.rtc = None
         self.oled = None
-        self.buzzer = None
 
         # GPS information
         self.last_gps_time = None
@@ -53,8 +52,8 @@ class TimeServer:
             if device_identifier == BrickletGPSV2.DEVICE_IDENTIFIER:
                 self.gps = BrickletGPSV2(uid, self.ipcon)
 
-                self.gps.set_date_time_callback_period(TimeServer.GPS_UPDATE_PERIOD)
-                self.gps.set_coordinates_callback_period(TimeServer.GPS_UPDATE_PERIOD)
+                self.gps.set_date_time_callback_period(HardwareTimeSource.GPS_UPDATE_PERIOD)
+                self.gps.set_coordinates_callback_period(HardwareTimeSource.GPS_UPDATE_PERIOD)
 
                 self.gps.register_callback(BrickletGPSV2.CALLBACK_DATE_TIME, self.cb_time_updated)
                 self.gps.register_callback(BrickletGPSV2.CALLBACK_COORDINATES, self.cb_location_updated)
@@ -68,8 +67,8 @@ class TimeServer:
             if device_identifier == BrickletRealTimeClock.DEVICE_IDENTIFIER:
                 self.rtc = BrickletRealTimeClock(uid, self.ipcon)
 
-                self.rtc.register_callback(BrickletRealTimeClock.CALLBACK_DATE_TIME, self.cb_rtc_time_update)
-                self.rtc.set_date_time_callback_period(TimeServer.RTC_UPDATE_PERIOD)
+                self.rtc.register_callback(BrickletRealTimeClock.CALLBACK_DATE_TIME, self._cb_rtc_time_update)
+                self.rtc.set_date_time_callback_period(HardwareTimeSource.RTC_UPDATE_PERIOD)
 
     def cb_connected(self, connected_reason):
         self.ipcon.enumerate()
@@ -77,6 +76,8 @@ class TimeServer:
     def cb_time_updated(self, d, t):
         fix, satelite_num = self.gps.get_status()
         if fix:
+            # TODO: Invoke time update callback
+
             year, d = d % 100, int(d/100)
             month, d = d % 100, int(d/100)
             day = d % 100
@@ -86,7 +87,7 @@ class TimeServer:
             minute, t = t % 100, int(t/100)
             hour = t % 100
 
-            self.last_gps_time = datetime(2000+year, month, day, hour, minute, second, microsecond=millisecond*1000, tzinfo=from_zone)
+            self.last_gps_time = datetime(2000+year, month, day, hour, minute, second, microsecond=millisecond*1000, tzinfo=utc_zone)
             self.update_rtc_time(self.last_gps_time)
 
             if self.oled:
@@ -104,18 +105,18 @@ class TimeServer:
         if self.rtc:
             self.rtc.set_date_time(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, dt.microsecond/10000, dt.weekday()+1)
 
-    def cb_rtc_time_update(self, year, month, day, hour, minute, second, centisecond, weekday, timestamp):
+    def _cb_rtc_time_update(self, year, month, day, hour, minute, second, centisecond, weekday, timestamp):
         if self.oled:
             self.oled.write_line(0, 2, "RTC Time: %02d:%02d:%02d.%02d" % (hour, minute, second, centisecond))
             self.oled.write_line(1, 2, "RTC Date: %02d.%02d.%d" % (day, month, year))
 
-    def get_current_time(self):
+    def get_rtc_time(self):
         if self.rtc:
             year, month, day, hour, minute, second, centisecond, weekday = self.rtc.get_date_time()
-            dt = datetime(year, month, day, hour, minute, second, 0, tzinfo=from_zone)
+            dt = datetime(year, month, day, hour, minute, second, 0, tzinfo=utc_zone)
 
             timestamp = (calendar.timegm(dt.timetuple()) * 1000 )+(centisecond*10)  # I'm not sure if this is the best way
 
-            return timestamp
+            return timestamp #TODO: Covert to datetime object 
         else:
-            return 0
+            raise Exception("RTC is not initialized!")
