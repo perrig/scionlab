@@ -6,9 +6,12 @@ import os
 import getopt
 from hardwaretimesource import HardwareTimeSource
 from ntptimesource import NTPTimeSource
-import datetime
+from datetime import datetime
 from dateutil import tz
 from datetime import timezone
+import systemtime
+from dateutil.tz import tzlocal
+import signal
 
 class TimeDaemon:
     MAX_DELTA=1.00  # 1s default tolerance
@@ -17,56 +20,66 @@ class TimeDaemon:
         self.hw_ts=hw_time_source
         self.ntp_ts=ntp_time_source
 
+        hw_time_source.register_gps_time_handler(self._gps_time_received)
+        hw_time_source.register_bricklets_discovery_finished(self._bricklets_discovered)
+
     def _is_similar(self, time1, time2, max_difference=MAX_DELTA):
         delta=(time1-time2).total_seconds()
         delta=abs(delta)
         return (delta<max_difference)
 
+    def _update_system_time(self, new_time):
+        new_time=new_time.astimezone(tz=tzlocal())
+        systemtime.set_system_time(new_time.timetuple())
+
+    def _bricklets_discovered(self):
+        print("All necessary bricklets are discovered!")
+        pass
+
     def _gps_time_received(self, gps_time):
-        # Check if GPS time is similar to local time
-        if self._is_similar(gps_time, datetime.now()):
-            # TODO: GPS and local time are similar. Update RTC clock
+        now=datetime.utcnow().replace(tzinfo=tz.tzutc())
+        
+        if self._is_similar(gps_time, now):
+            # GPS and local time are similar. Update RTC clock
             # and local time from GPS
-            pass
+            self._update_system_time(gps_time)
+            self.hw_ts.update_rtc_time(gps_time)
         else:
+            print("GPS and system time are different")
             # TODO: gps and local time are significantly different check with other sources
             rtc_time=self.hw_ts.get_rtc_time()
+            print("RTC Time: %s" % rtc_time)
             if self._is_similar(gps_time, rtc_time):
                 # RTC and GPS times are similar, probably first boot
-                # TODO: Update RTC clock and local time from GPS
-                pass
+                self._update_system_time(gps_time)
+                self.hw_ts.update_rtc_time(gps_time)
             else:
+                print("RTC and GPS time are different, checking NTP")
                 # GPS time is out of sync from both local and RTC time
                 # We will check it with NTP
-                ntp_time=self.ntp_ts.get_ntp_time()
+                ntp_time, _ = self.ntp_ts.get_ntp_time()
                 if self._is_similar(gps_time, ntp_time, max_difference=5): # we have 5s tolerance because of network nature of NTP
-                    pass
-                    # GPS and NTP are close. Rtc might be out of date.
-                    # TODO: Update RTC and local time
+                    print("NTP and GPS are similar, trusting GPS")
+                    # GPS and NTP are close. RTC battery might be new
+                    self._update_system_time(gps_time)
+                    self.hw_ts.update_rtc_time(gps_time)
                 else:
-                    pass
-                    # TODO: GPS time is different from every other time source
-                    # cannot establish precise time, PANIC! Stop other time servers
+                    print("PANIC! Unable to reliably determine time! Not setting any time....")
+                    # TODO: Sound the buzzer
                     
 
+def signal_handler(signal, frame):
+        print("Exiting...")
+        sys.exit(0)
+
 if __name__ == "__main__":
-    print("Starting")
+    print("Starting time daemon")
 
-    local=datetime.datetime(2018, 3, 4, 10, 0, 0, tzinfo=None)
-    utc=datetime.datetime(2018, 3, 4, 10, 0, 0, tzinfo=tz.tzutc())
-    utc=utc.astimezone(tz=None).replace(tzinfo=None)
+    hs=HardwareTimeSource("localhost", "4223")
+    ns=NTPTimeSource(["0.pool.ntp.org", "3.ch.pool.ntp.org", "3.europe.pool.ntp.org", "europe.pool.ntp.org"], 5) #TODO: Load ntp servers from config
 
-    a=datetime.datetime.now()
-    for i in range(1,100000000):
-        pass
-    b=datetime.datetime.now()
+    td=TimeDaemon(hs, ns)
 
-    td = TimeDaemon(None, None)
-    if td._is_similar(a, b):
-        print("It is similar")
-    else:
-        print("It is NOT similar")
-
-    print(local)   
-    print(utc)
-    # print(abs(delta.total_seconds()))
+    signal.signal(signal.SIGINT, signal_handler)
+    print('Press Ctrl+C to exit')
+    signal.pause()

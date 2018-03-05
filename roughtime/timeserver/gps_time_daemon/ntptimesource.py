@@ -2,6 +2,8 @@ import threading
 import ntplib
 from time import ctime
 from datetime import datetime
+from dateutil import tz
+from dateutil.tz import tzlocal
 
 def query_ntp_server(server_url, request_timeout, result_handler):
     client = ntplib.NTPClient()
@@ -9,7 +11,7 @@ def query_ntp_server(server_url, request_timeout, result_handler):
         response = client.request(server_url, version=3, timeout=request_timeout)
         result_handler(response)
     except:
-        print("Error getting time from ntp server: %s" %(server_url))
+        print("Error getting time from ntp server: %s" % (server_url))
 
 class TimeResult:
     def __init__(self):
@@ -76,10 +78,10 @@ class NTPTimeSource:
             worker.join()
 
         timestamp, server_num = response.get_time()
-        return datetime.fromtimestamp(timestamp), server_num
+        return datetime.fromtimestamp(timestamp).replace(tzinfo=tzlocal()), server_num
 
 if __name__ == "__main__":
-
+    print("Sending query to NTP servers")
     ntp_servers=["0.pool.ntp.org", "3.ch.pool.ntp.org", "3.europe.pool.ntp.org", "europe.pool.ntp.org"]
 
     ntp_source=NTPTimeSource(ntp_servers, 5)
