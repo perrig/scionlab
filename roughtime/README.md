@@ -4,7 +4,32 @@
 
 Roughtime is a project that aims to provide secure time synchronisation. More information on the project can be found on the [original repository](https://roughtime.googlesource.com/roughtime)
 
-This implementation also allows users who have a [ThinkerForge](https://www.tinkerforge.com/en/) board with [GPS 2](https://www.tinkerforge.com/de/blog/gps-bricklet-20-is-now-available/) and [RTC](https://www.tinkerforge.com/en/shop/real-time-clock-bricklet.html) bricklet to use accurate GPS time as a source for timeserver. If such hardware is not available, OS time will be used instead.
+This implementation also allows users who have a [ThinkerForge](https://www.tinkerforge.com/en/) board with [GPS 2](https://www.tinkerforge.com/de/blog/gps-bricklet-20-is-now-available/) and [RTC](https://www.tinkerforge.com/en/shop/real-time-clock-bricklet.html) bricklet to use accurate GPS time.
+
+## Build
+
+Install roughtime library:
+
+```
+cd $GOPATH/src/
+git clone https://roughtime.googlesource.com/roughtime roughtime.googlesource.com
+```
+
+Build server:
+
+```
+cd $GOPATH/src/github.com/perrig/scionlab/roughtime/timeserver
+go get
+go build
+```
+
+Build client:
+
+```
+cd $GOPATH/src/github.com/perrig/scionlab/roughtime/timeclient
+go get
+go build
+```
 
 ## Running the project
 
@@ -107,7 +132,7 @@ sudo ./timed.py
 
 This script will use GPS time to update system time, which is used by roughtime server. 
 
-Script has 3 sources of time
+Time daemon uses 3 sources of time:
 
 - GPS time
 - Time from RTC clock
