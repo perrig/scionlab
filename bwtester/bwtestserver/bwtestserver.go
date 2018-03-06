@@ -8,6 +8,9 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	log "github.com/inconshreveable/log15"
+	"github.com/kormat/fmt15"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,53 +48,82 @@ func purgeOldResults() {
 	}
 }
 
-func main() {
-	var (
-		serverCCAddrStr string
-		serverCCAddr    *snet.Addr
-		err             error
-		CCConn          *snet.Conn
-	)
+var (
+	serverCCAddrStr string
+	serverCCAddr    *snet.Addr
+	err             error
+	CCConn          *snet.Conn
+)
 
+func main() {
 	resultsMap = make(map[string]*BwtestResult)
 	go purgeOldResults()
 
 	// Fetch arguments from command line
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
+	id := flag.String("id", "bwtester", "Element ID")
+	// logDir := flag.String("log.dir", "logs", "Log directory")
 	flag.Parse()
 
-	// Create the SCION UDP socket
+	// Setup logging
+	log.Root().SetHandler(log.MultiHandler(
+		log.LvlFilterHandler(log.LvlError,
+			log.StreamHandler(os.Stderr,
+				fmt15.Fmt15Format(fmt15.ColorMap))),
+		log.LvlFilterHandler(log.LvlDebug,
+			log.Must.FileHandler(
+				fmt.Sprintf("logs/%s.log", *id),
+				fmt15.Fmt15Format(nil)))))
+	log.Debug("Setup info:", "id", *id)
+
 	if len(serverCCAddrStr) > 0 {
-		serverCCAddr, err = snet.AddrFromString(serverCCAddrStr)
+		runServer(serverCCAddrStr)
 		if err != nil {
 			printUsage()
-			Check(err)
+			LogFatal("Unable to start server", "err", err)
 		}
 	} else {
 		printUsage()
-		Check(fmt.Errorf("Error, server address needs to be specified with -s"))
+		LogFatal("Error, server address needs to be specified with -s")
+	}
+
+}
+
+func runServer(serverCCAddrStr string) {
+	// Create the SCION UDP socket
+	serverCCAddr, err = snet.AddrFromString(serverCCAddrStr)
+	if err != nil {
+		printUsage()
+		LogFatal("Unable to start server", "err", err)
 	}
 
 	sciondAddr := "/run/shm/sciond/sd" + strconv.Itoa(serverCCAddr.IA.I) + "-" + strconv.Itoa(serverCCAddr.IA.A) + ".sock"
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
+	log.Info("Starting server")
 	snet.Init(serverCCAddr.IA, sciondAddr, dispatcherAddr)
 
 	ci := strings.LastIndex(serverCCAddrStr, ":")
 	if ci < 0 {
 		// This should never happen, an error would have been much earlier detected
-		Check(fmt.Errorf("Malformed server address"))
+		LogFatal("Malformed server address")
 	}
 	serverISDASIP := serverCCAddrStr[:ci]
-	// fmt.Println("serverISDASIP:", serverISDASIP)
 
 	CCConn, err = snet.ListenSCION("udp4", serverCCAddr)
-	Check(err)
+	if err != nil {
+		LogFatal("Cannot listen on SCION socket", err)
+	}
 
 	receivePacketBuffer := make([]byte, 2500)
 	sendPacketBuffer := make([]byte, 2500)
+	handleClients(CCConn, serverISDASIP, receivePacketBuffer, sendPacketBuffer)
+}
+
+func handleClients(CCConn *snet.Conn, serverISDASIP string, receivePacketBuffer []byte, sendPacketBuffer []byte) {
+	defer LogPanicAndRestart(handleClients, CCConn, serverISDASIP, receivePacketBuffer, sendPacketBuffer)
+
 	for {
 		// Handle client requests
-
 		n, clientCCAddr, err := CCConn.ReadFrom(receivePacketBuffer)
 		if err != nil {
 			// Todo: check error in detail, but for now simply continue
@@ -178,17 +210,21 @@ func main() {
 			ci := strings.LastIndex(clientCCAddrStr, ":")
 			if ci < 0 {
 				// This should never happen
-				Check(fmt.Errorf("Malformed client address"))
+				LogFatal("Malformed client address")
 			}
 			clientISDASIP := clientCCAddrStr[:ci]
 
 			// Address of client Data Connection (DC)
 			ca := clientISDASIP + ":" + strconv.Itoa(int(clientBwp.Port))
 			clientDCAddr, err := snet.AddrFromString(ca)
-			Check(err)
+			if err != nil {
+				LogFatal("Cannot convert string to address", err)
+			}
 			// Address of server Data Connection (DC)
 			serverDCAddr, err := snet.AddrFromString(serverISDASIP + ":" + strconv.Itoa(int(serverBwp.Port)))
-			Check(err)
+			if err != nil {
+				LogFatal("Cannot convert string to address", err)
+			}
 
 			// Open Data Connection
 			DCConn, err := snet.DialSCION("udp4", serverDCAddr, clientDCAddr)
