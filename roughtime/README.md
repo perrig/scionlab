@@ -97,18 +97,20 @@ Running client is done by specifying client's SCION address and path to the file
 ./timeclient --address <CLIENTS_SCION_ADDRESS> --servers <PATH_TO_SERVERS_CONFIGURATION>
 ```
 
-## Running server with GPS time source
+## Running GPS time daemon
 
-If necessary Thinkerforge hardware is available and [Brick Daemon](https://www.tinkerforge.com/en/doc/Software/Brickd.html) is running additional script `timed.py` in `timeserver/gps_time_daemon` can be started with following command:
-
-```
-./timed.py -l /tmp/timed.sock
-```
-
-Argument `l` specifies Unix domain socket that will be used for timeservers to communicate with gps time daemon.
-
-After `gps_time_daemon` is successfully started Roughtime server can be started in the same way as before with additional parameter `gps_timed` as presented int following example:
+If necessary Thinkerforge hardware is available, [Brick Daemon](https://www.tinkerforge.com/en/doc/Software/Brickd.html) is running and necessary python library [ntplib](https://pypi.python.org/pypi/ntplib/) is installed, additional script `timed.py` in `timeserver/gps_time_daemon` can be started with following command:
 
 ```
-./timeserver run p.key server.json --gps_timed /tmp/timed.sock
+sudo ./timed.py
 ```
+
+This script will use GPS time to update system time, which is used by roughtime server. 
+
+Script has 3 sources of time
+
+- GPS time
+- Time from RTC clock
+- Time obtained from NTP
+
+Every time GPS time is received it is compared with other time sources to verify they are close to each other. If its impossible to match GPS time with either RTC or NTP time, time won't be updated. (Next version will uze OLED display and buzzer to notify the user of situation).
