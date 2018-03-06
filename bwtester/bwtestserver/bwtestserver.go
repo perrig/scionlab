@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/scionproto/scion/go/lib/snet"
 	. "github.com/perrig/scionlab/bwtester/bwtestlib"
+	"github.com/scionproto/scion/go/lib/snet"
 )
 
 func printUsage() {

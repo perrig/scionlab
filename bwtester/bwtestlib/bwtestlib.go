@@ -1,6 +1,7 @@
 package bwtestlib
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/aes"
 	"encoding/binary"
@@ -9,9 +10,12 @@ import (
 	log "github.com/inconshreveable/log15"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/scionproto/scion/go/lib/pathmgr"
+	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
 )
 
@@ -267,3 +271,38 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 	_ = udpConnection.Close()
 }
 
+func ChoosePath(interactive bool, local snet.Addr, remote snet.Addr) *sciond.PathReplyEntry {
+	pathMgr := snet.DefNetwork.PathResolver()
+	pathSet := pathMgr.Query(local.IA, remote.IA)
+	pathIndices := make(map[uint64]pathmgr.PathKey)
+	pathIndex := uint64(0)
+	i := uint64(0)
+
+	if len(pathSet) == 0 {
+		return nil
+	}
+
+	fmt.Printf("Available paths to %v\n", remote.IA)
+	for k, path := range pathSet {
+		pathIndices[i] = k
+		fmt.Printf("[%2d] %s\n", i, path.Entry.Path.String())
+		i++
+	}
+
+	if interactive {
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			fmt.Printf("Choose path: ")
+			pathIndexStr, _ := reader.ReadString('\n')
+			pathIndex, err := strconv.ParseUint(pathIndexStr[:len(pathIndexStr)-1], 10, 64)
+			if err == nil && pathIndex < uint64(len(pathIndices)) {
+				break
+			}
+			fmt.Printf("ERROR: Invalid path index, valid indices range: [0, %v]\n", i-1)
+		}
+	}
+	pathKey := pathIndices[pathIndex]
+	entry := pathSet[pathKey].Entry
+	fmt.Printf("Using path:\n  %s\n", entry.Path.String())
+	return entry
+}

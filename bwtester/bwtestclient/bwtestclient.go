@@ -15,13 +15,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/scionproto/scion/go/lib/snet"
 	. "github.com/perrig/scionlab/bwtester/bwtestlib"
+	"github.com/scionproto/scion/go/lib/snet"
+	"github.com/scionproto/scion/go/lib/spath"
 )
 
 const (
-	DefaultBwtestParameters = "3,1000,30"
-	GracePeriodSync time.Duration = time.Millisecond * 10
+	DefaultBwtestParameters               = "3,1000,30"
+	GracePeriodSync         time.Duration = time.Millisecond * 10
 )
 
 func prepareAESKey() []byte {
@@ -40,6 +41,7 @@ func printUsage() {
 	fmt.Println("Example SCION address 1-1011,[192.33.93.166]:42002")
 	fmt.Println("cs specifies time duration (seconds), packet size (bytes), number of packets of client->server test")
 	fmt.Println("sc specifies time duration, packet size, number of packets of server->client test")
+	fmt.Println("i specifies if the client is used in interactive mode, when true the user is prompted for a path choice")
 	fmt.Println("Default test parameters", DefaultBwtestParameters)
 }
 
@@ -98,6 +100,7 @@ func main() {
 		clientBwp    BwtestParameters
 		serverBwpStr string
 		serverBwp    BwtestParameters
+		interactive  bool
 
 		err   error
 		tzero time.Time // initialized to "zero" time
@@ -109,6 +112,7 @@ func main() {
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
 	flag.StringVar(&serverBwpStr, "sc", DefaultBwtestParameters, "Server->Client test parameter")
 	flag.StringVar(&clientBwpStr, "cs", DefaultBwtestParameters, "Client->Server test parameter")
+	flag.BoolVar(&interactive, "i", false, "Interactive mode")
 
 	flag.Parse()
 
@@ -131,6 +135,18 @@ func main() {
 	sciondAddr := "/run/shm/sciond/sd" + strconv.Itoa(clientCCAddr.IA.I) + "-" + strconv.Itoa(clientCCAddr.IA.A) + ".sock"
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	snet.Init(clientCCAddr.IA, sciondAddr, dispatcherAddr)
+
+	if !serverCCAddr.IA.Eq(clientCCAddr.IA) {
+		pathEntry := ChoosePath(interactive, *clientCCAddr, *serverCCAddr)
+		if pathEntry == nil {
+			LogFatal("No paths available to remote destination")
+		}
+		serverCCAddr.Path = spath.New(pathEntry.Path.FwdPath)
+		serverCCAddr.Path.InitOffsets()
+		serverCCAddr.NextHopHost = pathEntry.HostInfo.Host()
+		serverCCAddr.NextHopPort = pathEntry.HostInfo.Port
+	}
+
 	CCConn, err = snet.DialSCION("udp4", clientCCAddr, serverCCAddr)
 	Check(err)
 	// fmt.Println("clientCCAddr -> serverCCAddr", clientCCAddr, "->", serverCCAddr)
