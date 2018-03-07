@@ -89,10 +89,13 @@ The bandwidth testing application `bwtester` enables a variety of bandwidth test
 
 ### bwtestclient
 
-To install bwtestclient:
+To install bwtestclient and get dependencies as listed in vendor file:
 ```shell
 go get github.com/perrig/scionlab/bwtester/bwtestclient
+govendor sync
 ```
+
+For govendor, see note [1].
 
 You can test the application as follows, replacing the client address with your own address after the `-c` option (you can select any available port number for the client):
 
@@ -108,10 +111,13 @@ bwtestclient -s 1-6,[192.33.93.173]:30100 -c 1-1006,[10.0.2.15]:30102 -cs 10,100
 
 ### bwtestserver
 
-To install bwtestserver:
+To install bwtestserver and get dependencies as listed in vendor file:
 ```shell
 go get github.com/perrig/scionlab/bwtester/bwtestserver
+govendor sync
 ```
+
+For govendor, see note [1].
 
 The server is started as follows, where the address needs to be adjusted as for other applications:
 
@@ -120,3 +126,13 @@ bwtestserver -s 1-6,[192.33.93.173]:30100 &
 ```
 
 ***
+
+[1] govendor: govendor gets already installed by the main scion installation with the supported version. If you don't have govendor installed, you can do so using the following steps:
+```shell
+mkdir $GOPATH/kardianos; cd $GOPATH/kardianos/
+git clone https://github.com/kardianos/govendor.git
+cd ./govendor/
+git fetch; git checkout fbbc78e8d1b533dfcf81c2a4be2cec2617a926f7
+go install -v
+```
+

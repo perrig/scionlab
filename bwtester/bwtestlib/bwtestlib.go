@@ -1,15 +1,21 @@
 package bwtestlib
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/aes"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
-	"log"
+	log "github.com/inconshreveable/log15"
+	"os"
+	"runtime/debug"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/scionproto/scion/go/lib/pathmgr"
+	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
 )
 
@@ -52,7 +58,21 @@ type BwtestResult struct {
 
 func Check(e error) {
 	if e != nil {
-		log.Fatal(e)
+		LogFatal("Fatal error. Exiting.", e)
+	}
+}
+
+func LogFatal(msg string, a ...interface{}) {
+	log.Crit(msg, a...)
+	os.Exit(1)
+}
+
+// TODO: make it more generic: func LogPanicAndRestart(f func(a ...interface{}), a ...interface{}) {
+func LogPanicAndRestart(f func(a *snet.Conn, b string, c []byte, d []byte), CCConn *snet.Conn, serverISDASIP string, receivePacketBuffer []byte, sendPacketBuffer []byte) {
+	if msg := recover(); msg != nil {
+		log.Crit("Panic", "msg", msg, "stack", string(debug.Stack()))
+		log.Debug("Recovering from panic.")
+		f(CCConn, serverISDASIP, receivePacketBuffer, sendPacketBuffer)
 	}
 }
 
@@ -250,3 +270,58 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 	}
 	_ = udpConnection.Close()
 }
+
+func ChoosePath(interactive bool, local snet.Addr, remote snet.Addr) *sciond.PathReplyEntry {
+	pathMgr := snet.DefNetwork.PathResolver()
+	pathSet := pathMgr.Query(local.IA, remote.IA)
+	var appPaths []*pathmgr.AppPath
+	var selectedPath *pathmgr.AppPath
+	pathIndex := 0
+
+	if len(pathSet) == 0 {
+		return nil
+	}
+
+	fmt.Printf("Available paths to %v\n", remote.IA)
+	i := 0
+	for _, path := range pathSet {
+		appPaths = append(appPaths, path)
+		fmt.Printf("[%2d] %s\n", i, path.Entry.Path.String())
+		i++
+	}
+
+	if interactive {
+		scanner := bufio.NewScanner(os.Stdin)
+		for {
+			fmt.Printf("Choose path: ")
+			scanner.Scan()
+			pathIndexStr := scanner.Text()
+			pathIndex, err := strconv.Atoi(pathIndexStr)
+			if err == nil && 0 <= pathIndex && pathIndex < len(appPaths) {
+				break
+			}
+			fmt.Printf("ERROR: Invalid path index %v, valid indices range: [0, %v]\n", pathIndex, len(appPaths)-1)
+		}
+		selectedPath = appPaths[pathIndex]
+	} else {
+		// when in non-interactive mode, use path selection function to choose path
+		selectedPath = pathSelection(pathSet)
+	}
+	entry := selectedPath.Entry
+	fmt.Printf("Using path:\n  %s\n", entry.Path.String())
+	return entry
+}
+
+func pathSelection(pathSet pathmgr.AppPathSet) *pathmgr.AppPath {
+	var selectedPath *pathmgr.AppPath = nil
+	// Select shortest path  TODO: support custom path selection algorithms
+	for _, appPath := range pathSet {
+		if selectedPath == nil || len(appPath.Entry.Path.Interfaces) < len(selectedPath.Entry.Path.Interfaces) {
+			selectedPath = appPath
+		}
+		fmt.Println(len(appPath.Entry.Path.Interfaces))
+	}
+	log.Debug("Path selection algorithm choice", "path", selectedPath.Entry.Path.String())
+	return selectedPath;
+}
+
