@@ -274,35 +274,54 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 func ChoosePath(interactive bool, local snet.Addr, remote snet.Addr) *sciond.PathReplyEntry {
 	pathMgr := snet.DefNetwork.PathResolver()
 	pathSet := pathMgr.Query(local.IA, remote.IA)
-	pathIndices := make(map[uint64]pathmgr.PathKey)
-	pathIndex := uint64(0)
-	i := uint64(0)
+	var appPaths []*pathmgr.AppPath
+	var selectedPath *pathmgr.AppPath
+	pathIndex := 0
 
 	if len(pathSet) == 0 {
 		return nil
 	}
 
 	fmt.Printf("Available paths to %v\n", remote.IA)
-	for k, path := range pathSet {
-		pathIndices[i] = k
+	i := 0
+	for _, path := range pathSet {
+		appPaths = append(appPaths, path)
 		fmt.Printf("[%2d] %s\n", i, path.Entry.Path.String())
 		i++
 	}
 
 	if interactive {
-		reader := bufio.NewReader(os.Stdin)
+		scanner := bufio.NewScanner(os.Stdin)
 		for {
 			fmt.Printf("Choose path: ")
-			pathIndexStr, _ := reader.ReadString('\n')
-			pathIndex, err := strconv.ParseUint(pathIndexStr[:len(pathIndexStr)-1], 10, 64)
-			if err == nil && pathIndex < uint64(len(pathIndices)) {
+			scanner.Scan()
+			pathIndexStr := scanner.Text()
+			pathIndex, err := strconv.Atoi(pathIndexStr)
+			if err == nil && 0 <= pathIndex && pathIndex < len(appPaths) {
 				break
 			}
-			fmt.Printf("ERROR: Invalid path index, valid indices range: [0, %v]\n", i-1)
+			fmt.Printf("ERROR: Invalid path index %v, valid indices range: [0, %v]\n", pathIndex, len(appPaths)-1)
 		}
+		selectedPath = appPaths[pathIndex]
+	} else {
+		// when in non-interactive mode, use path selection function to choose path
+		selectedPath = pathSelection(pathSet)
 	}
-	pathKey := pathIndices[pathIndex]
-	entry := pathSet[pathKey].Entry
+	entry := selectedPath.Entry
 	fmt.Printf("Using path:\n  %s\n", entry.Path.String())
 	return entry
 }
+
+func pathSelection(pathSet pathmgr.AppPathSet) *pathmgr.AppPath {
+	var selectedPath *pathmgr.AppPath = nil
+	// Select shortest path  TODO: support custom path selection algorithms
+	for _, appPath := range pathSet {
+		if selectedPath == nil || len(appPath.Entry.Path.Interfaces) < len(selectedPath.Entry.Path.Interfaces) {
+			selectedPath = appPath
+		}
+		fmt.Println(len(appPath.Entry.Path.Interfaces))
+	}
+	log.Debug("Path selection algorithm choice", "path", selectedPath.Entry.Path.String())
+	return selectedPath;
+}
+
