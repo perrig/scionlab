@@ -62,17 +62,20 @@ func main() {
 	// Fetch arguments from command line
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
 	id := flag.String("id", "bwtester", "Element ID")
-	// logDir := flag.String("log.dir", "logs", "Log directory")
+	logDir := flag.String("log_dir", "logs", "Log directory")
 	flag.Parse()
 
 	// Setup logging
+	if _, err := os.Stat(*logDir); os.IsNotExist(err) {
+		os.Mkdir(*logDir, 0744)
+	}
 	log.Root().SetHandler(log.MultiHandler(
 		log.LvlFilterHandler(log.LvlError,
 			log.StreamHandler(os.Stderr,
 				fmt15.Fmt15Format(fmt15.ColorMap))),
 		log.LvlFilterHandler(log.LvlDebug,
 			log.Must.FileHandler(
-				fmt.Sprintf("logs/%s.log", *id),
+				fmt.Sprintf("%s/%s.log", *logDir, *id),
 				fmt15.Fmt15Format(nil)))))
 	log.Debug("Setup info:", "id", *id)
 
