@@ -200,7 +200,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 	recBuf := make([]byte, bwp.PacketSize+1000)
 	cmpBuf := make([]byte, bwp.PacketSize)
 	for time.Now().Before(finish) && correctlyReceived < bwp.NumPackets {
-		n, _, err := udpConnection.ReadFrom(recBuf)
+		n, err := udpConnection.Read(recBuf)
 		// Ignore errors, todo: detect type of error and quit if it was because of a SetReadDeadline
 		if err != nil {
 			// If the ReadDeadline expired, then we should extend the finish time, which is
@@ -276,7 +276,6 @@ func ChoosePath(interactive bool, local snet.Addr, remote snet.Addr) *sciond.Pat
 	pathSet := pathMgr.Query(local.IA, remote.IA)
 	var appPaths []*pathmgr.AppPath
 	var selectedPath *pathmgr.AppPath
-	pathIndex := 0
 
 	if len(pathSet) == 0 {
 		return nil
@@ -298,11 +297,11 @@ func ChoosePath(interactive bool, local snet.Addr, remote snet.Addr) *sciond.Pat
 			pathIndexStr := scanner.Text()
 			pathIndex, err := strconv.Atoi(pathIndexStr)
 			if err == nil && 0 <= pathIndex && pathIndex < len(appPaths) {
+				selectedPath = appPaths[pathIndex]
 				break
 			}
 			fmt.Printf("ERROR: Invalid path index %v, valid indices range: [0, %v]\n", pathIndex, len(appPaths)-1)
 		}
-		selectedPath = appPaths[pathIndex]
 	} else {
 		// when in non-interactive mode, use path selection function to choose path
 		selectedPath = pathSelection(pathSet)
@@ -322,6 +321,5 @@ func pathSelection(pathSet pathmgr.AppPathSet) *pathmgr.AppPath {
 		fmt.Println(len(appPath.Entry.Path.Interfaces))
 	}
 	log.Debug("Path selection algorithm choice", "path", selectedPath.Entry.Path.String())
-	return selectedPath;
+	return selectedPath
 }
-
