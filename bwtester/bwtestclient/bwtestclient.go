@@ -16,6 +16,7 @@ import (
 	"time"
 
 	. "github.com/perrig/scionlab/bwtester/bwtestlib"
+	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
 	"github.com/scionproto/scion/go/lib/spath"
 )
@@ -136,8 +137,9 @@ func main() {
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	snet.Init(clientCCAddr.IA, sciondAddr, dispatcherAddr)
 
+	var pathEntry *sciond.PathReplyEntry
 	if !serverCCAddr.IA.Eq(clientCCAddr.IA) {
-		pathEntry := ChoosePath(interactive, *clientCCAddr, *serverCCAddr)
+		pathEntry = ChoosePath(interactive, *clientCCAddr, *serverCCAddr)
 		if pathEntry == nil {
 			LogFatal("No paths available to remote destination")
 		}
@@ -179,6 +181,15 @@ func main() {
 	// Address of server data channel (DC)
 	serverDCAddr, err = snet.AddrFromString(serverISDASIP + ":" + strconv.Itoa(serverPort+1))
 	Check(err)
+	// Set path on data connection
+	if !serverDCAddr.IA.Eq(clientDCAddr.IA) {
+		serverDCAddr.Path = spath.New(pathEntry.Path.FwdPath)
+		serverDCAddr.Path.InitOffsets()
+		serverDCAddr.NextHopHost = pathEntry.HostInfo.Host()
+		// log.Debug("Client DC", "Next Hop", serverDCAddr.NextHopHost, "Server Host", serverDCAddr.Host, "Server Port", serverDCAddr.L4Port)
+		fmt.Printf("Client DC \tNext Hop %v\tServer Host %v\t Server Port %v\n", serverDCAddr.NextHopHost, serverDCAddr.Host, serverDCAddr.L4Port)
+		serverDCAddr.NextHopPort = pathEntry.HostInfo.Port
+	}
 
 	// Data channel connection
 	DCConn, err = snet.DialSCION("udp4", clientDCAddr, serverDCAddr)

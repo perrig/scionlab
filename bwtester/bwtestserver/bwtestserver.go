@@ -62,7 +62,7 @@ func main() {
 	// Fetch arguments from command line
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
 	id := flag.String("id", "bwtester", "Element ID")
-	logDir := flag.String("log_dir", "logs", "Log directory")
+	logDir := flag.String("log_dir", "./logs", "Log directory")
 	flag.Parse()
 
 	// Setup logging
@@ -71,11 +71,9 @@ func main() {
 	}
 	log.Root().SetHandler(log.MultiHandler(
 		log.LvlFilterHandler(log.LvlError,
-			log.StreamHandler(os.Stderr,
-				fmt15.Fmt15Format(fmt15.ColorMap))),
+			log.StreamHandler(os.Stderr, fmt15.Fmt15Format(fmt15.ColorMap))),
 		log.LvlFilterHandler(log.LvlDebug,
-			log.Must.FileHandler(
-				fmt.Sprintf("%s/%s.log", *logDir, *id),
+			log.Must.FileHandler(fmt.Sprintf("%s/%s.log", *logDir, *id),
 				fmt15.Fmt15Format(nil)))))
 	log.Debug("Setup info:", "id", *id)
 
@@ -127,7 +125,7 @@ func handleClients(CCConn *snet.Conn, serverISDASIP string, receivePacketBuffer 
 
 	for {
 		// Handle client requests
-		n, clientCCAddr, err := CCConn.ReadFrom(receivePacketBuffer)
+		n, clientCCAddr, err := CCConn.ReadFromSCION(receivePacketBuffer)
 		if err != nil {
 			// Todo: check error in detail, but for now simply continue
 			continue
@@ -223,11 +221,18 @@ func handleClients(CCConn *snet.Conn, serverISDASIP string, receivePacketBuffer 
 			if err != nil {
 				LogFatal("Cannot convert string to address", err)
 			}
+
 			// Address of server Data Connection (DC)
 			serverDCAddr, err := snet.AddrFromString(serverISDASIP + ":" + strconv.Itoa(int(serverBwp.Port)))
 			if err != nil {
 				LogFatal("Cannot convert string to address", err)
 			}
+
+			// Set path on data connection as reverse of client path (received address is already Reversed)
+			clientDCAddr.Path = clientCCAddr.Path
+			clientDCAddr.NextHopHost = clientCCAddr.NextHopHost
+			clientDCAddr.NextHopPort = clientCCAddr.NextHopPort
+			log.Debug("Server DC", "Next Hop", clientDCAddr.NextHopHost, "Client Host", clientDCAddr.Host, "Client Port", clientDCAddr.L4Port)
 
 			// Open Data Connection
 			DCConn, err := snet.DialSCION("udp4", serverDCAddr, clientDCAddr)
