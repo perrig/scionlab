@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/scionproto/scion/go/lib/common"
 	"github.com/scionproto/scion/go/lib/pathmgr"
 	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
@@ -59,7 +60,7 @@ type BwtestResult struct {
 
 func Check(e error) {
 	if e != nil {
-		LogFatal("Fatal error. Exiting.", e)
+		LogFatal("Fatal error. Exiting.", "err", e)
 	}
 }
 
@@ -182,8 +183,14 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 		// Place packet number at the beginning of the packet, overwriting some PRG data
 		binary.LittleEndian.PutUint32(sb, uint32(i*bwp.PacketSize))
 		n, err := udpConnection.Write(sb)
-		Check(err)
-		if n < bwp.PacketSize {
+		if err != nil {
+			if common.GetErrorMsg(err) == "Path not found" { // TODO: add const error string to snet/conn and use that
+				// Do not handle "Path not found" as fatal, log and skip
+				log.Debug("No path to remote found", "err", common.FmtError(err))
+			} else {
+				Check(err)
+			}
+		} else if n < bwp.PacketSize {
 			Check(fmt.Errorf("Insufficient number of bytes written:", n, "instead of:", bwp.PacketSize))
 		}
 		i++
