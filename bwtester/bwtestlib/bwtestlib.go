@@ -8,6 +8,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	log "github.com/inconshreveable/log15"
+	"math"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -271,7 +272,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 	_ = udpConnection.Close()
 }
 
-func ChoosePath(interactive bool, local snet.Addr, remote snet.Addr) *sciond.PathReplyEntry {
+func ChoosePath(interactive bool, pathAlgo string, local snet.Addr, remote snet.Addr) *sciond.PathReplyEntry {
 	pathMgr := snet.DefNetwork.PathResolver()
 	pathSet := pathMgr.Query(local.IA, remote.IA)
 	var appPaths []*pathmgr.AppPath
@@ -304,22 +305,74 @@ func ChoosePath(interactive bool, local snet.Addr, remote snet.Addr) *sciond.Pat
 		}
 	} else {
 		// when in non-interactive mode, use path selection function to choose path
-		selectedPath = pathSelection(pathSet)
+		selectedPath = pathSelection(pathSet, pathAlgo)
 	}
 	entry := selectedPath.Entry
 	fmt.Printf("Using path:\n  %s\n", entry.Path.String())
 	return entry
 }
 
-func pathSelection(pathSet pathmgr.AppPathSet) *pathmgr.AppPath {
-	var selectedPath *pathmgr.AppPath = nil
-	// Select shortest path  TODO: support custom path selection algorithms
+func pathSelection(pathSet pathmgr.AppPathSet, pathAlgo string) *pathmgr.AppPath {
+	var selectedPath *pathmgr.AppPath
+	var metric float64
+	// A path selection algorithm consists of a simple comparision function selecting the best path according
+	// to some path property and a metric function normalizing that property to a value in [0,1], where larger is better
+	// Available path selection algorithms, the metric returned must be normalized between [0,1]:
+	pathAlgos := map[string](func(pathmgr.AppPathSet) (*pathmgr.AppPath, float64)){
+		"shortest": selectShortestPath,
+		"mtu": selectLargestMTUPath,
+	}
+	switch pathAlgo {
+	case "shortest":
+		log.Debug("Path selection algorithm", "pathAlgo", "shortest")
+		selectedPath, metric = pathAlgos[pathAlgo](pathSet)
+	case "mtu":
+		log.Debug("Path selection algorithm", "pathAlgo", "MTU")
+		selectedPath, metric = pathAlgos[pathAlgo](pathSet)
+	default:
+		// Default is to take result with best score
+		for _, algo := range pathAlgos {
+			cadidatePath, cadidateMetric := algo(pathSet)
+			if cadidateMetric > metric {
+				selectedPath = cadidatePath
+				metric = cadidateMetric
+			}
+		}
+	}
+	log.Debug("Path selection algorithm choice", "path", selectedPath.Entry.Path.String(), "score", metric)
+	return selectedPath
+}
+
+func selectShortestPath(pathSet pathmgr.AppPathSet) (selectedPath *pathmgr.AppPath, metric float64) {
+	// Selects shortest path by number of hops
 	for _, appPath := range pathSet {
 		if selectedPath == nil || len(appPath.Entry.Path.Interfaces) < len(selectedPath.Entry.Path.Interfaces) {
 			selectedPath = appPath
 		}
-		fmt.Println(len(appPath.Entry.Path.Interfaces))
 	}
-	log.Debug("Path selection algorithm choice", "path", selectedPath.Entry.Path.String())
-	return selectedPath
+	metric_fn := func(rawMetric []sciond.PathInterface) (result float64) {
+		hopCount := float64(len(rawMetric))
+		midpoint := 7.0
+		result = math.Exp(-(hopCount-midpoint)) / (1 + math.Exp(-(hopCount-midpoint)))
+		return result
+	}
+	return selectedPath, metric_fn(selectedPath.Entry.Path.Interfaces)
 }
+
+func selectLargestMTUPath(pathSet pathmgr.AppPathSet) (selectedPath *pathmgr.AppPath, metric float64) {
+	// Selects path with largest MTU
+	for _, appPath := range pathSet {
+		if selectedPath == nil || appPath.Entry.Path.Mtu > selectedPath.Entry.Path.Mtu {
+			selectedPath = appPath
+		}
+	}
+	metric_fn := func(rawMetric uint16) (result float64) {
+		mtu := float64(rawMetric)
+		midpoint := 1500.0
+		tilt := 0.004
+		result = 1 / (1 + math.Exp(-tilt*(mtu-midpoint)))
+		return result
+	}
+	return selectedPath, metric_fn(selectedPath.Entry.Path.Mtu)
+}
+

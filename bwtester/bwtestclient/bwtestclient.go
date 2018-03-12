@@ -102,6 +102,7 @@ func main() {
 		serverBwpStr string
 		serverBwp    BwtestParameters
 		interactive  bool
+		pathAlgo     string
 
 		err   error
 		tzero time.Time // initialized to "zero" time
@@ -114,6 +115,7 @@ func main() {
 	flag.StringVar(&serverBwpStr, "sc", DefaultBwtestParameters, "Server->Client test parameter")
 	flag.StringVar(&clientBwpStr, "cs", DefaultBwtestParameters, "Client->Server test parameter")
 	flag.BoolVar(&interactive, "i", false, "Interactive mode")
+	flag.StringVar(&pathAlgo, "pathAlgo", "", "Path selection algorithm / metric (\"shortest\", \"mtu\")")
 
 	flag.Parse()
 
@@ -139,7 +141,7 @@ func main() {
 
 	var pathEntry *sciond.PathReplyEntry
 	if !serverCCAddr.IA.Eq(clientCCAddr.IA) {
-		pathEntry = ChoosePath(interactive, *clientCCAddr, *serverCCAddr)
+		pathEntry = ChoosePath(interactive, pathAlgo, *clientCCAddr, *serverCCAddr)
 		if pathEntry == nil {
 			LogFatal("No paths available to remote destination")
 		}
@@ -285,8 +287,8 @@ func main() {
 	fmt.Println("\nS->C results")
 	att := 8 * serverBwp.PacketSize * serverBwp.NumPackets / int(serverBwp.BwtestDuration/time.Second)
 	ach := 8 * serverBwp.PacketSize * res.CorrectlyReceived / int(serverBwp.BwtestDuration/time.Second)
-	fmt.Println("Attempted bandwidth:", att, "bps /", att/1000000, "Mbps")
-	fmt.Println("Achieved bandwidth:", ach, "bps / ", ach/1000000, "Mbps")
+	fmt.Printf("Attempted bandwidth: %d bps / %.2f Mbps\n", att, float64(att)/1000000)
+	fmt.Printf("Achieved bandwidth: %d bps / %.2f Mbps\n", ach, float64(ach)/1000000)
 	fmt.Println("Loss rate:", (serverBwp.NumPackets-res.CorrectlyReceived)*100/serverBwp.NumPackets, "%")
 
 	// Fetch results from server
@@ -348,8 +350,8 @@ func main() {
 		fmt.Println("\nC->S results")
 		att = 8 * clientBwp.PacketSize * clientBwp.NumPackets / int(clientBwp.BwtestDuration/time.Second)
 		ach = 8 * clientBwp.PacketSize * sres.CorrectlyReceived / int(clientBwp.BwtestDuration/time.Second)
-		fmt.Println("Attempted bandwidth:", att, "bps /", att/1000000, "Mbps")
-		fmt.Println("Achieved bandwidth:", ach, "bps /", ach/1000000, "Mbps")
+		fmt.Printf("Attempted bandwidth: %d bps / %.2f Mbps\n", att, float64(att)/1000000)
+		fmt.Printf("Achieved bandwidth: %d bps / %.2f Mbps\n", ach, float64(ach)/1000000)
 		fmt.Println("Loss rate:", (clientBwp.NumPackets-sres.CorrectlyReceived)*100/clientBwp.NumPackets, "%")
 		return
 	}
