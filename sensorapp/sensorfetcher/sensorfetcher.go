@@ -9,7 +9,7 @@ import (
 	"log"
 	"strconv"
 
-	"github.com/netsec-ethz/scion/go/lib/snet"
+	"github.com/scionproto/scion/go/lib/snet"
 )
 
 func check(e error) {
