@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/netsec-ethz/scion/go/lib/snet"
+	"github.com/scionproto/scion/go/lib/snet"
 )
 
 const (
