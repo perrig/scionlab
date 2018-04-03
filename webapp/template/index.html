@@ -1,0 +1,133 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SCIONLab Go Tests</title>
+<style>
+.output {
+ float: top; height: 50%;
+}
+
+.column {
+ float: left; width: 50%; /*margin: 10px*/
+}
+
+.row:after {
+ content: ""; display: table; clear: both; overflow: scroll;
+}
+</style>
+<script type="text/javascript" src="static/js/jquery-2.2.0.min.js"></script>
+</head>
+<body>
+ <h1>SCIONLab Go Tests</h1>
+ <p>
+  This Go web server wraps several SCION test client apps and provides
+  an interface for any text and/or image output received. <a
+   href='http://github.com/perrig/scionlab'>SCIONLab Apps</a> are on
+  Github.
+ </p>
+ <div class="row">
+  <div class="column">
+   <form action="/files" method="post">
+    <input type="submit" value="Browse File System" />
+   </form>
+   <p>
+   <form action="/command" method="post" id="command-form"
+    onreset="resetHandler();">
+    SCIONLab Client Tests
+    <div>
+     <select id="apps" name="apps" size="5" required>
+      <option value="camerapp">camerapp</option>
+      <option value="sensorapp">sensorapp</option>
+      <option value="bwtester">bwtester</option>
+      <option value="statstest">statstest</option>
+      <option value="imagetest">imagetest</option>
+     </select>
+    </div>
+    <div>
+     Client ISD-AS,[Host]:Port: <input type="text" name="ia_cli"
+      required placeholder="1-11" pattern="^[0-9]*-[0-9]*$"
+      style="width: 60px;">,[<input type="text" name="addr_cli"
+      required placeholder="127.0.0.3"
+      pattern="((^|\.)((25[0-5])|(2[0-4]\d)|(1\d\d)|([1-9]?\d))){4}$"
+      style="width: 125px;">]:<input name="port_cli"
+      type="number" required placeholder=30001 style="width: 75px;"
+      min="1">
+    </div>
+    <div>
+     Server ISD-AS,[Host]:Port: <input type="text" name="ia_ser"
+      required placeholder="1-12" pattern="^[0-9]*-[0-9]*$"
+      style="width: 60px;">,[<input type="text" name="addr_ser"
+      required placeholder="127.0.0.2"
+      pattern="((^|\.)((25[0-5])|(2[0-4]\d)|(1\d\d)|([1-9]?\d))){4}$"
+      style="width: 125px;">]:<input name="port_ser"
+      type="number" required placeholder=30002 style="width: 75px;"
+      min="1">
+    </div>
+    <div>
+     Additional Options: <input type="text" name="addl_opt"
+      placeholder="-cs 10,1000,1250 -sc 10,1000,12500">
+    </div>
+    <!-- <input type="submit" value="Execute SCION Client" /> -->
+    <input type="button" value="Execute SCION Client"
+     onclick="return command();" /><input type="reset"
+     value="Reset Fields">
+    <p>
+   </form>
+   <div style="font-family: monospace; white-space: pre-line;">
+    <div id="results"></div>
+   </div>
+  </div>
+  <div class="column">
+   <div id="image_text"></div>
+   <div id="images"></div>
+  </div>
+ </div>
+ <script type="text/javascript">
+        var commandProg, imageTextTimer
+
+        function command() {
+            // TODO (mwfarb): ensure validating without submit action
+            // TODO (mwfarb): create user db of last submits per app, reload
+            var i = 1;
+            $("#results").text("Executing ");
+            $('#results').append($("#apps :selected").text());
+            commandProg = setInterval(function() {
+                $('#results').append('.');
+                i += 1;
+            }, 500);
+            var form_data = $('#command-form').serializeArray();
+            $('#results').load('/command', form_data, function() {
+                clearInterval(commandProg);
+                // check for new images once, on command complete
+                setTimeout(function() {
+                    $('#image_text').load('/txtlast', form_data);
+                    $('#images').load('/imglast', form_data);
+                }, 500);
+                // update image text each minute
+                imageTextTimer = setInterval(function() {
+                }, 60000);
+            });
+            return true;
+        }
+
+        function resetHandler() {
+            if (commandProg)
+                clearInterval(commandProg);
+            if (imageTextTimer)
+                clearInterval(imageTextTimer);
+            $("#results").empty();
+            $('#image_text').empty();
+            $('#images').empty();
+        }
+
+        $(document).ready(function() {
+            $.ajaxSetup({
+                cache : false
+            });
+        });
+    </script>
+ <noscript>This form requires that you have javascript
+  enabled to work properly please enable javascript in your browser.</noscript>
+</body>
+</html>
