@@ -9,11 +9,11 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	. "github.com/perrig/scionlab/bwtester/bwtestlib"
 	"github.com/scionproto/scion/go/lib/sciond"
@@ -22,7 +22,12 @@ import (
 )
 
 const (
-	DefaultBwtestParameters               = "3,1000,30"
+	DefaultBwtestParameters               = "3,1000,30,80kbps"
+	DefaultDuration			      = 3
+	DefaultPktSize 			      = 1000
+	DefaultPktCount			      = 30
+	DefaultBW			      = 3000
+	WildcardChar			      = "?"
 	GracePeriodSync         time.Duration = time.Millisecond * 10
 )
 
@@ -31,7 +36,7 @@ func prepareAESKey() []byte {
 	n, err := rand.Read(key)
 	Check(err)
 	if n != 16 {
-		Check(fmt.Errorf("Did not obtain 16 bytes of random information, only received", n))
+		Check(fmt.Errorf("Did not obtain 16 bytes of random information, only received %d", n))
 	}
 	return key
 }
@@ -40,39 +45,181 @@ func printUsage() {
 	fmt.Println("bwtestclient -c ClientSCIONAddress -s ServerSCIONAddress -cs t,size,num -sc t,size,num")
 	fmt.Println("The SCION address is specified as ISD-AS,[IP Address]:Port")
 	fmt.Println("Example SCION address 1-1011,[192.33.93.166]:42002")
-	fmt.Println("cs specifies time duration (seconds), packet size (bytes), number of packets of client->server test")
-	fmt.Println("sc specifies time duration, packet size, number of packets of server->client test")
-	fmt.Println("i specifies if the client is used in interactive mode, when true the user is prompted for a path choice")
+	fmt.Println("cs specifies time duration (seconds), packet size (bytes), number of packets, target bandwidth " +
+		"of client->server test, you can also only set the target bandwidth")
+	fmt.Println("sc specifies time duration, packet size, number of packets, target bandwidth of server->client " +
+		"test, you can also only set the target bandwidth")
+	fmt.Println("i specifies if the client is used in interactive mode, " +
+		"when true the user is prompted for a path choice")
 	fmt.Println("Default test parameters", DefaultBwtestParameters)
 }
 
-// Input format (time duration, packet size, number of packets), no spaces
+// Input format (time duration,packet size,number of packets,target bandwidth), no spaces, question mark ? is wildcard
+// The value of the wildcard is computed from the other values, if more than one wildcard is used,
+// all but the last one are set to the defaults values
 func parseBwtestParameters(s string) BwtestParameters {
-	// Since "-" is not part of the parse string, all numbers read are positive
-	re := regexp.MustCompile("[0-9]+")
-	a := re.FindAllString(s, -1)
-	if len(a) != 3 {
-		Check(fmt.Errorf("Incorrect number of arguments, need 3 values for bwtestparameters"))
+	if !strings.Contains(s, ",") {
+		// Using simple bandwidth setting with all defaults except bandwidth
+		s = "?,?,?,"+s
+	}
+	a := strings.Split(s, ",")
+	if len(a) != 4 {
+		Check(fmt.Errorf("Incorrect number of arguments, need 4 values for bwtestparameters. " +
+			"You can use ? as wildcard, e.g. %s", DefaultBwtestParameters))
+	}
+	wildcards := 0
+	for _, v := range a {
+		if v == WildcardChar {
+			wildcards += 1
+		}
 	}
 
-	a1, err := strconv.Atoi(a[0])
-	Check(err)
+	var a1, a2, a3, a4 int
+	if a[0] == WildcardChar {
+		wildcards -= 1
+		if wildcards == 0 {
+			a2 = getPacketSize(a[1])
+			a3 = getPacketCount(a[2])
+			a4 = parseBandwidth(a[3])
+			a1 = (a2 * 8 * a3) / a4
+			if time.Second * time.Duration(a1) > MaxDuration {
+				fmt.Printf("Duration is exceeding MaxDuration: %v > %v, using default value %d\n",
+					a1, MaxDuration / time.Second, DefaultDuration)
+				fmt.Println("Target bandwidth might no be reachable with that parameter.")
+				a1 = DefaultDuration
+			}
+			if a1 < 1 {
+				fmt.Printf("Duration is too short: %v , using default value %d\n",
+					a1, DefaultDuration)
+				fmt.Println("Target bandwidth might no be reachable with that parameter.")
+				a1 = DefaultDuration
+			}
+		} else {
+			a1 = DefaultDuration
+		}
+	} else {
+		a1 = getDuration(a[0])
+	}
+	if a[1] == WildcardChar {
+		wildcards -= 1
+		if wildcards == 0 {
+			a3 = getPacketCount(a[2])
+			a4 = parseBandwidth(a[3])
+			a2 = (a4 * a1) / (a3 * 8)
+		} else {
+			a2 = DefaultPktSize
+		}
+	} else {
+		a2 = getPacketSize(a[1])
+	}
+	if a[2] == WildcardChar {
+		wildcards -= 1
+		if wildcards == 0 {
+			a4 = parseBandwidth(a[3])
+			a3 = (a4 * a1) / (a2 * 8)
+		} else {
+			a3 = DefaultPktCount
+		}
+	} else {
+		a3 = getPacketCount(a[2])
+	}
+	if a[3] == WildcardChar {
+		wildcards -= 1
+		if wildcards == 0 {
+			fmt.Printf("Target bandwidth is %d\n", a2 * a3 * 8 / a1)
+		}
+	} else {
+		a4 = parseBandwidth(a[3])
+		// allow a deviation of up to one packet per 1 second interval, since we do not send half-packets
+		if a2 * a3 * 8 / a1 > a4 + a2 * a1 || a2 * a3 * 8 / a1 < a4 - a2 * a1 {
+			Check(fmt.Errorf("Computed target bandwidth does not match parameters, " +
+				"use wildcard or specify correct bandwidth, expected %d, provided %d",
+				a2 * a3 * 8/ a1, a4))
+		}
+	}
+	key := prepareAESKey()
+	return BwtestParameters{time.Second * time.Duration(a1), a2, a3, key, 0}
+}
+
+func parseBandwidth(bw string) int {
+	rawBw := strings.Split(bw, "bps")
+	if len(rawBw[0]) < 1 {
+		fmt.Printf("Invalid bandwidth %v provided, using default value %d\n", bw, DefaultBW)
+		return DefaultBW
+	}
+
+	m := 1
+	val := rawBw[0][:len(rawBw[0])-1]
+	suffix := rawBw[0][len(rawBw[0])-1:]
+	switch suffix {
+	case "k":
+		m = 1e3
+		break
+	case "M":
+		m = 1e6
+		break
+	case "G":
+		m = 1e9
+		break
+	case "T":
+		m = 1e12
+		break
+	default:
+		m = 1
+		val = rawBw[0]
+		// ensure that the string ends with a digit
+		if !unicode.IsDigit(([]rune(suffix))[0]) {
+			fmt.Printf("Invalid bandwidth %v provided, using default value %d\n", val, DefaultBW)
+			return DefaultBW
+		}
+	}
+
+	a4, err := strconv.Atoi(val)
+	if err != nil || a4 < 0 {
+		fmt.Printf("Invalid bandwidth %v provided, using default value %d\n", val, DefaultBW)
+		return DefaultBW
+	}
+
+	return a4 * m
+}
+
+func getDuration(duration string) int {
+	a1, err := strconv.Atoi(duration)
+	if err != nil || a1 <= 0 {
+		fmt.Printf("Invalid duration %v provided, using default value %d\n", a1, DefaultDuration)
+		a1 = DefaultDuration
+	}
 	d := time.Second * time.Duration(a1)
 	if d > MaxDuration {
-		Check(fmt.Errorf("Duration is exceeding MaxDuration:", a1, ">", MaxDuration/time.Second))
+		Check(fmt.Errorf("Duration is exceeding MaxDuration:", a1, ">", MaxDuration / time.Second))
+		a1 = DefaultDuration
 	}
-	a2, err := strconv.Atoi(a[1])
-	Check(err)
+	return a1
+}
+
+func getPacketSize(size string) int {
+	a2, err := strconv.Atoi(size)
+	if err != nil {
+		fmt.Printf("Invalid packet size %v provided, using default value %d\n", a2, DefaultPktSize)
+		a2 = DefaultPktSize
+	}
+
 	if a2 < MinPacketSize {
 		a2 = MinPacketSize
 	}
 	if a2 > MaxPacketSize {
 		a2 = MaxPacketSize
 	}
-	a3, err := strconv.Atoi(a[2])
-	Check(err)
-	key := prepareAESKey()
-	return BwtestParameters{d, a2, a3, key, 0}
+	return a2
+}
+
+func getPacketCount(count string) int {
+	a3, err := strconv.Atoi(count)
+	if err != nil || a3 <= 0 {
+		fmt.Printf("Invalid packet count %v provided, using default value %d\n", a3, DefaultPktCount)
+		a3 = DefaultPktCount
+	}
+	return a3
 }
 
 func main() {
@@ -135,7 +282,8 @@ func main() {
 		Check(fmt.Errorf("Error, server address needs to be specified with -s"))
 	}
 
-	sciondAddr := "/run/shm/sciond/sd" + strconv.Itoa(clientCCAddr.IA.I) + "-" + strconv.Itoa(clientCCAddr.IA.A) + ".sock"
+	sciondAddr := "/run/shm/sciond/sd" + strconv.Itoa(int(clientCCAddr.IA.I)) + "-" +
+		strconv.Itoa(int(clientCCAddr.IA.A)) + ".sock"
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	snet.Init(clientCCAddr.IA, sciondAddr, dispatcherAddr)
 
@@ -188,8 +336,10 @@ func main() {
 		serverDCAddr.Path = spath.New(pathEntry.Path.FwdPath)
 		serverDCAddr.Path.InitOffsets()
 		serverDCAddr.NextHopHost = pathEntry.HostInfo.Host()
-		// log.Debug("Client DC", "Next Hop", serverDCAddr.NextHopHost, "Server Host", serverDCAddr.Host, "Server Port", serverDCAddr.L4Port)
-		fmt.Printf("Client DC \tNext Hop %v\tServer Host %v\t Server Port %v\n", serverDCAddr.NextHopHost, serverDCAddr.Host, serverDCAddr.L4Port)
+		// log.Debug("Client DC", "Next Hop", serverDCAddr.NextHopHost, "Server Host",
+		// 	serverDCAddr.Host, "Server Port", serverDCAddr.L4Port)
+		fmt.Printf("Client DC \tNext Hop %v\tServer Host %v\t Server Port %v\n",
+			serverDCAddr.NextHopHost, serverDCAddr.Host, serverDCAddr.L4Port)
 		serverDCAddr.NextHopPort = pathEntry.HostInfo.Port
 	}
 
