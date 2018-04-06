@@ -247,7 +247,7 @@ func handleClients(CCConn *snet.Conn, serverISDASIP string, receivePacketBuffer 
 			expFinishTimeSend := t.Add(serverBwp.BwtestDuration + GracePeriodSend)
 			expFinishTimeReceive := t.Add(clientBwp.BwtestDuration + StragglerWaitPeriod)
 			// We use resultsMapLock also for the bres variable
-			bres := BwtestResult{-1, -1, clientBwp.PrgKey, expFinishTimeReceive}
+			bres := BwtestResult{-1, -1, -1, -1, -1, -1, clientBwp.PrgKey, expFinishTimeReceive}
 			if expFinishTimeReceive.Before(expFinishTimeSend) {
 				// The receiver will close the DC connection, so it will wait long enough until the
 				// sender is also done

@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,21 +20,20 @@ import (
 	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
 	"github.com/scionproto/scion/go/lib/spath"
-	"os"
 )
 
 const (
 	DefaultBwtestParameters               = "3,1000,30,80kbps"
-	DefaultDuration			      = 3
-	DefaultPktSize 			      = 1000
-	DefaultPktCount			      = 30
-	DefaultBW			      = 3000
-	WildcardChar			      = "?"
+	DefaultDuration                       = 3
+	DefaultPktSize                        = 1000
+	DefaultPktCount                       = 30
+	DefaultBW                             = 3000
+	WildcardChar                          = "?"
 	GracePeriodSync         time.Duration = time.Millisecond * 10
 )
 
 var (
-	InferedPktSize	     int
+	InferedPktSize int
 )
 
 func prepareAESKey() []byte {
@@ -57,8 +57,8 @@ func printUsage() {
 		"all but the last one are set to the default values, e.g. ?,1000,?,5Mbps will run the test for the " +
 		"default duration and send as many packets as required to reach a bandwidth of 5 Mbps with the given " +
 		"packet size.")
-	fmt.Println("\tSupported unit prefixes for the bandwidth parameter are none (e.g. 1500bps for 1.5kbps), k, M, G, T.")
-	fmt.Println("\tYou can also only set the target bandwidth, e.g. -cs 1Mpbs")
+	fmt.Println("\tSupported bandwidth unit prefixes are: none (e.g. 1500bps for 1.5kbps), k, M, G, T.")
+	fmt.Println("\tYou can also only set the target bandwidth, e.g. -cs 1Mbps")
 	fmt.Println("-sc specifies time duration, packet size, number of packets, target bandwidth of server->client " +
 		"test")
 	fmt.Println("\tYou can also only set the target bandwidth, e.g. -sc 1500kbps")
@@ -74,11 +74,11 @@ func printUsage() {
 func parseBwtestParameters(s string) BwtestParameters {
 	if !strings.Contains(s, ",") {
 		// Using simple bandwidth setting with all defaults except bandwidth
-		s = "?,?,?,"+s
+		s = "?,?,?," + s
 	}
 	a := strings.Split(s, ",")
 	if len(a) != 4 {
-		Check(fmt.Errorf("Incorrect number of arguments, need 4 values for bwtestparameters. " +
+		Check(fmt.Errorf("Incorrect number of arguments, need 4 values for bwtestparameters. "+
 			"You can use ? as wildcard, e.g. %s", DefaultBwtestParameters))
 	}
 	wildcards := 0
@@ -96,9 +96,9 @@ func parseBwtestParameters(s string) BwtestParameters {
 			a3 = getPacketCount(a[2])
 			a4 = parseBandwidth(a[3])
 			a1 = (a2 * 8 * a3) / a4
-			if time.Second * time.Duration(a1) > MaxDuration {
+			if time.Second*time.Duration(a1) > MaxDuration {
 				fmt.Printf("Duration is exceeding MaxDuration: %v > %v, using default value %d\n",
-					a1, MaxDuration / time.Second, DefaultDuration)
+					a1, MaxDuration/time.Second, DefaultDuration)
 				fmt.Println("Target bandwidth might no be reachable with that parameter.")
 				a1 = DefaultDuration
 			}
@@ -140,15 +140,15 @@ func parseBwtestParameters(s string) BwtestParameters {
 	if a[3] == WildcardChar {
 		wildcards -= 1
 		if wildcards == 0 {
-			fmt.Printf("Target bandwidth is %d\n", a2 * a3 * 8 / a1)
+			fmt.Printf("Target bandwidth is %d\n", a2*a3*8/a1)
 		}
 	} else {
 		a4 = parseBandwidth(a[3])
 		// allow a deviation of up to one packet per 1 second interval, since we do not send half-packets
-		if a2 * a3 * 8 / a1 > a4 + a2 * a1 || a2 * a3 * 8 / a1 < a4 - a2 * a1 {
-			Check(fmt.Errorf("Computed target bandwidth does not match parameters, " +
+		if a2*a3*8/a1 > a4+a2*a1 || a2*a3*8/a1 < a4-a2*a1 {
+			Check(fmt.Errorf("Computed target bandwidth does not match parameters, "+
 				"use wildcard or specify correct bandwidth, expected %d, provided %d",
-				a2 * a3 * 8/ a1, a4))
+				a2*a3*8/a1, a4))
 		}
 	}
 	key := prepareAESKey()
@@ -205,7 +205,7 @@ func getDuration(duration string) int {
 	}
 	d := time.Second * time.Duration(a1)
 	if d > MaxDuration {
-		Check(fmt.Errorf("Duration is exceeding MaxDuration:", a1, ">", MaxDuration / time.Second))
+		Check(fmt.Errorf("Duration is exceeding MaxDuration:", a1, ">", MaxDuration/time.Second))
 		a1 = DefaultDuration
 	}
 	return a1
@@ -235,6 +235,7 @@ func getPacketCount(count string) int {
 	}
 	return a3
 }
+
 
 func main() {
 	var (
@@ -280,7 +281,8 @@ func main() {
 
 	flag.Parse()
 	flagset := make(map[string]bool)
-	flag.Visit(func(f *flag.Flag) { flagset[f.Name]=true }) // record if flags were set or if default value was used
+	// record if flags were set or if default value was used
+	flag.Visit(func(f *flag.Flag) { flagset[f.Name] = true })
 
 	if flag.NFlag() == 0 {
 		// no flag was set, only print usage and exit
@@ -398,7 +400,7 @@ func main() {
 	t := time.Now()
 	expFinishTimeSend := t.Add(serverBwp.BwtestDuration + MaxRTT + GracePeriodSend)
 	expFinishTimeReceive := t.Add(clientBwp.BwtestDuration + MaxRTT + StragglerWaitPeriod)
-	res := BwtestResult{-1, -1, clientBwp.PrgKey, expFinishTimeReceive}
+	res := BwtestResult{-1, -1, -1, -1, -1, -1, clientBwp.PrgKey, expFinishTimeReceive}
 	var resLock sync.Mutex
 	if expFinishTimeReceive.Before(expFinishTimeSend) {
 		// The receiver will close the DC connection, so it will wait long enough until the
@@ -477,6 +479,12 @@ func main() {
 	fmt.Printf("Attempted bandwidth: %d bps / %.2f Mbps\n", att, float64(att)/1000000)
 	fmt.Printf("Achieved bandwidth: %d bps / %.2f Mbps\n", ach, float64(ach)/1000000)
 	fmt.Println("Loss rate:", (serverBwp.NumPackets-res.CorrectlyReceived)*100/serverBwp.NumPackets, "%")
+	variance := res.IPAvar
+	average := res.IPAavg
+	fmt.Printf("Interarrival time variance: %dms, average interarrival time: %dms\n",
+		variance/1e6, average/1e6)
+	fmt.Printf("Interarrival time min: %dms, interarrival time max: %dms\n",
+		res.IPAmin/1e6, res.IPAmax/1e6)
 
 	// Fetch results from server
 	numtries = 0
@@ -540,6 +548,12 @@ func main() {
 		fmt.Printf("Attempted bandwidth: %d bps / %.2f Mbps\n", att, float64(att)/1000000)
 		fmt.Printf("Achieved bandwidth: %d bps / %.2f Mbps\n", ach, float64(ach)/1000000)
 		fmt.Println("Loss rate:", (clientBwp.NumPackets-sres.CorrectlyReceived)*100/clientBwp.NumPackets, "%")
+		variance := sres.IPAvar
+		average := sres.IPAavg
+		fmt.Printf("Interarrival time variance: %dms, average interarrival time: %dms\n",
+			variance/1e6, average/1e6)
+		fmt.Printf("Interarrival time min: %dms, interarrival time max: %dms\n",
+			sres.IPAmin/1e6, sres.IPAmax/1e6)
 		return
 	}
 

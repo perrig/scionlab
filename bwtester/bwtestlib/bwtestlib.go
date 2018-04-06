@@ -12,6 +12,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strconv"
+	"sort"
 	"sync"
 	"time"
 
@@ -52,6 +53,10 @@ type BwtestParameters struct {
 type BwtestResult struct {
 	NumPacketsReceived int
 	CorrectlyReceived  int
+	IPAvar             int
+	IPAmin             int
+	IPAavg             int
+	IPAmax             int
 	// Contains the client's sending PRG key, so that the result can be uniquely identified
 	// Only requests that contain the correct key can obtain the result
 	PrgKey             []byte
@@ -203,6 +208,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 	resLock.Unlock()
 	numPacketsReceived := 0
 	correctlyReceived := 0
+	InterPacketArrivalTime := make(map[int]int64)
 	_ = udpConnection.SetReadDeadline(finish)
 	// Make the receive buffer a bit larger to enable detection of packets that are too large
 	recBuf := make([]byte, bwp.PacketSize+1000)
@@ -233,6 +239,8 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 		// so that a discrepancy is noticed immediately without generating the
 		// entire packet
 		iv := int(binary.LittleEndian.Uint32(recBuf))
+		seqNo := iv / bwp.PacketSize
+		InterPacketArrivalTime[seqNo] = time.Now().UnixNano()
 		PrgFill(bwp.PrgKey, iv, cmpBuf)
 		binary.LittleEndian.PutUint32(cmpBuf, uint32(iv))
 		if bytes.Equal(recBuf[:bwp.PacketSize], cmpBuf) {
@@ -263,6 +271,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 	resLock.Lock()
 	res.NumPacketsReceived = numPacketsReceived
 	res.CorrectlyReceived = correctlyReceived
+	res.IPAvar, res.IPAmin, res.IPAavg, res.IPAmax = aggrInterArrivalTime(InterPacketArrivalTime)
 
 	// We're done here, let's see if we need to wait for the send function to complete so we can close the connection
 	// Note: the locking here is not strictly necessary, since ExpectedFinishTime is only updated right after
@@ -277,6 +286,44 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 		time.Sleep(eft.Sub(time.Now()))
 	}
 	_ = udpConnection.Close()
+}
+
+func aggrInterArrivalTime(bwr map[int]int64) (IPAvar, IPAmin, IPAavg, IPAmax int) {
+	// reverse map, mapping timestamps to sequence numbers
+	revMap := make(map[int64]int)
+	var keys []int64 // keys are the timestamps of the received packets
+	// fill the reverse map and the keep track of the timestamps
+	for k, v := range bwr {
+		revMap[v] = k
+		keys = append(keys, v)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] }) // sorted timestamps of the received packets
+
+	// We keep only the interarrival times of successive packets with no drops
+	var iat []int64
+	i := 1
+	for i < len(keys) {
+		if revMap[keys[i-1]]+1 == revMap[keys[i]] { // valid measurement without reordering, include
+			iat = append(iat, keys[i]-keys[i-1]) // resulting interarrival time
+		}
+		i += 1
+	}
+
+	// Compute variance and average
+	var average float64 = 0
+	IPAmin = -1
+	for _, v := range iat {
+		if int(v) > IPAmax {
+			IPAmax = int(v)
+		}
+		if int(v) < IPAmin || IPAmin == -1 {
+			IPAmin = int(v)
+		}
+		average += float64(v) / float64(len(iat))
+	}
+	IPAvar = IPAmax  - int(average)
+	IPAavg = int(average)
+	return
 }
 
 func ChoosePath(interactive bool, pathAlgo string, local snet.Addr, remote snet.Addr) *sciond.PathReplyEntry {
