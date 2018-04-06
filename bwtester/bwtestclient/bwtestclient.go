@@ -32,6 +32,10 @@ const (
 	GracePeriodSync         time.Duration = time.Millisecond * 10
 )
 
+var (
+	InferedPktSize	     int
+)
+
 func prepareAESKey() []byte {
 	key := make([]byte, 16)
 	n, err := rand.Read(key)
@@ -117,7 +121,7 @@ func parseBwtestParameters(s string) BwtestParameters {
 			a4 = parseBandwidth(a[3])
 			a2 = (a4 * a1) / (a3 * 8)
 		} else {
-			a2 = DefaultPktSize
+			a2 = InferedPktSize
 		}
 	} else {
 		a2 = getPacketSize(a[1])
@@ -210,8 +214,8 @@ func getDuration(duration string) int {
 func getPacketSize(size string) int {
 	a2, err := strconv.Atoi(size)
 	if err != nil {
-		fmt.Printf("Invalid packet size %v provided, using default value %d\n", a2, DefaultPktSize)
-		a2 = DefaultPktSize
+		fmt.Printf("Invalid packet size %v provided, using default value %d\n", a2, InferedPktSize)
+		a2 = InferedPktSize
 	}
 
 	if a2 < MinPacketSize {
@@ -278,7 +282,7 @@ func main() {
 	flagset := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) { flagset[f.Name]=true }) // record if flags were set or if default value was used
 
-	if flag.NArg() == 0 {
+	if flag.NFlag() == 0 {
 		// no flag was set, only print usage and exit
 		printUsage()
 		os.Exit(0)
@@ -365,6 +369,13 @@ func main() {
 	DCConn, err = snet.DialSCION("udp4", clientDCAddr, serverDCAddr)
 	Check(err)
 
+	// update default packet size to max MTU on the selected path
+	if pathEntry != nil {
+		InferedPktSize = int(pathEntry.Path.Mtu)
+	} else {
+		// use default packet size when within same AS and pathEntry is not set
+		InferedPktSize = DefaultPktSize
+	}
 	if !flagset["cs"] && flagset["sc"] { // Only one direction set, used same for reverse
 		clientBwpStr = serverBwpStr
 		fmt.Println("Only sc parameter set, using same values for cs")
