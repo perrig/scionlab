@@ -19,6 +19,7 @@ import (
 	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
 	"github.com/scionproto/scion/go/lib/spath"
+	"os"
 )
 
 const (
@@ -42,16 +43,25 @@ func prepareAESKey() []byte {
 }
 
 func printUsage() {
-	fmt.Println("bwtestclient -c ClientSCIONAddress -s ServerSCIONAddress -cs t,size,num -sc t,size,num")
-	fmt.Println("The SCION address is specified as ISD-AS,[IP Address]:Port")
+	fmt.Println("bwtestclient -c ClientSCIONAddress -s ServerSCIONAddress -cs t,size,num,bw -sc t,size,num,bw -i")
+	fmt.Println("A SCION address is specified as ISD-AS,[IP Address]:Port")
 	fmt.Println("Example SCION address 1-1011,[192.33.93.166]:42002")
-	fmt.Println("cs specifies time duration (seconds), packet size (bytes), number of packets, target bandwidth " +
-		"of client->server test, you can also only set the target bandwidth")
-	fmt.Println("sc specifies time duration, packet size, number of packets, target bandwidth of server->client " +
-		"test, you can also only set the target bandwidth")
-	fmt.Println("i specifies if the client is used in interactive mode, " +
+	fmt.Println("-cs specifies time duration (seconds), packet size (bytes), number of packets, target bandwidth " +
+		"of client->server test")
+	fmt.Println("\tThe question mark character ? can be used as wildcard when setting the test parameters " +
+		"and its value is computed according to the other parameters. When more than one wilcard is used, " +
+		"all but the last one are set to the default values, e.g. ?,1000,?,5Mbps will run the test for the " +
+		"default duration and send as many packets as required to reach a bandwidth of 5 Mbps with the given " +
+		"packet size.")
+	fmt.Println("\tSupported unit prefixes for the bandwidth parameter are none (e.g. 1500bps for 1.5kbps), k, M, G, T.")
+	fmt.Println("\tYou can also only set the target bandwidth, e.g. -cs 1Mpbs")
+	fmt.Println("-sc specifies time duration, packet size, number of packets, target bandwidth of server->client " +
+		"test")
+	fmt.Println("\tYou can also only set the target bandwidth, e.g. -sc 1500kbps")
+	fmt.Println("\tWhen only the cs or sc flag is set, the other flag is set to the same value.")
+	fmt.Println("-i specifies if the client is used in interactive mode, " +
 		"when true the user is prompted for a path choice")
-	fmt.Println("Default test parameters", DefaultBwtestParameters)
+	fmt.Println("Default test parameters are: ", DefaultBwtestParameters)
 }
 
 // Input format (time duration,packet size,number of packets,target bandwidth), no spaces, question mark ? is wildcard
@@ -265,6 +275,14 @@ func main() {
 	flag.StringVar(&pathAlgo, "pathAlgo", "", "Path selection algorithm / metric (\"shortest\", \"mtu\")")
 
 	flag.Parse()
+	flagset := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { flagset[f.Name]=true }) // record if flags were set or if default value was used
+
+	if flag.NArg() == 0 {
+		// no flag was set, only print usage and exit
+		printUsage()
+		os.Exit(0)
+	}
 
 	// Create SCION UDP socket
 	if len(clientCCAddrStr) > 0 {
@@ -347,8 +365,16 @@ func main() {
 	DCConn, err = snet.DialSCION("udp4", clientDCAddr, serverDCAddr)
 	Check(err)
 
+	if !flagset["cs"] && flagset["sc"] { // Only one direction set, used same for reverse
+		clientBwpStr = serverBwpStr
+		fmt.Println("Only sc parameter set, using same values for cs")
+	}
 	clientBwp = parseBwtestParameters(clientBwpStr)
 	clientBwp.Port = uint16(clientPort + 1)
+	if !flagset["sc"] && flagset["cs"] { // Only one direction set, used same for reverse
+		serverBwpStr = clientBwpStr
+		fmt.Println("Only cs parameter set, using same values for sc")
+	}
 	serverBwp = parseBwtestParameters(serverBwpStr)
 	serverBwp.Port = uint16(serverPort + 1)
 	fmt.Println("\nTest parameters:")
