@@ -98,7 +98,7 @@ func runServer(serverCCAddrStr string) {
 		LogFatal("Unable to start server", "err", err)
 	}
 
-	sciondAddr := "/run/shm/sciond/sd" + strconv.Itoa(serverCCAddr.IA.I) + "-" + strconv.Itoa(serverCCAddr.IA.A) + ".sock"
+	sciondAddr := "/run/shm/sciond/sd" + strconv.Itoa(int(serverCCAddr.IA.I)) + "-" + strconv.Itoa(int(serverCCAddr.IA.A)) + ".sock"
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	log.Info("Starting server")
 	snet.Init(serverCCAddr.IA, sciondAddr, dispatcherAddr)
@@ -111,9 +111,7 @@ func runServer(serverCCAddrStr string) {
 	serverISDASIP := serverCCAddrStr[:ci]
 
 	CCConn, err = snet.ListenSCION("udp4", serverCCAddr)
-	if err != nil {
-		LogFatal("Cannot listen on SCION socket", err)
-	}
+	Check(err)
 
 	receivePacketBuffer := make([]byte, 2500)
 	sendPacketBuffer := make([]byte, 2500)
