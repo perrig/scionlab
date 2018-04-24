@@ -57,7 +57,7 @@ func main() {
 		check(fmt.Errorf("Error, server address needs to be specified with -s"))
 	}
 
-	sciondAddr := "/run/shm/sciond/sd" + strconv.Itoa(local.IA.I) + "-" + strconv.Itoa(local.IA.A) + ".sock"
+	sciondAddr := "/run/shm/sciond/sd" + strconv.Itoa(int(local.IA.I)) + "-" + strconv.FormatInt(int64(local.IA.A), 10) + ".sock"
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	snet.Init(local.IA, sciondAddr, dispatcherAddr)
 
