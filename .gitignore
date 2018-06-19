@@ -15,3 +15,8 @@
 
 # Emacs temp files
 *~
+
+# User-defined webapp node addresses
+clients_default.json
+clients_user.json
+servers_user.json
