@@ -306,7 +306,7 @@ func main() {
 		Check(fmt.Errorf("Error, server address needs to be specified with -s"))
 	}
 
-	sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%d.sock", clientCCAddr.IA.I, clientCCAddr.IA.A)
+	sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%s.sock", clientCCAddr.IA.I, clientCCAddr.IA.A.FileFmt())
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	snet.Init(clientCCAddr.IA, sciondAddr, dispatcherAddr)
 
