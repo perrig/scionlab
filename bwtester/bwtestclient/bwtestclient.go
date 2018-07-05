@@ -34,6 +34,8 @@ const (
 
 var (
 	InferedPktSize int
+	sciondAddr     *string
+	sciondFromIA   *bool
 )
 
 func prepareAESKey() []byte {
@@ -236,9 +238,10 @@ func getPacketCount(count string) int {
 	return a3
 }
 
-
 func main() {
 	var (
+		sciondAddr      string
+		sciondFromIA    bool
 		clientCCAddrStr string
 		serverCCAddrStr string
 		clientISDASIP   string
@@ -272,6 +275,8 @@ func main() {
 		receiveDone sync.Mutex // used to signal when the HandleDCConnReceive goroutine has completed
 	)
 
+	flag.StringVar(&sciondAddr, "sciond", "", "Path to sciond socket")
+	flag.BoolVar(&sciondFromIA, "sciondFromIA", false, "SCIOND socket path from IA address:ISD-AS")
 	flag.StringVar(&clientCCAddrStr, "c", "", "Client SCION Address")
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
 	flag.StringVar(&serverBwpStr, "sc", DefaultBwtestParameters, "Server->Client test parameter")
@@ -306,7 +311,14 @@ func main() {
 		Check(fmt.Errorf("Error, server address needs to be specified with -s"))
 	}
 
-	sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%d.sock", clientCCAddr.IA.I, clientCCAddr.IA.A)
+	if sciondFromIA {
+		if sciondAddr != "" {
+			LogFatal("Only one of -sciond or -sciondFromIA can be specified")
+		}
+		sciondAddr = sciond.GetDefaultSCIONDPath(&serverCCAddr.IA)
+	} else if sciondAddr == "" {
+		sciondAddr = sciond.GetDefaultSCIONDPath(nil)
+	}
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	snet.Init(clientCCAddr.IA, sciondAddr, dispatcherAddr)
 

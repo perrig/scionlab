@@ -7,19 +7,20 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
-	log "github.com/inconshreveable/log15"
 	"math"
 	"os"
 	"runtime/debug"
-	"strconv"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
+	log "github.com/inconshreveable/log15"
+
 	"github.com/scionproto/scion/go/lib/common"
-	"github.com/scionproto/scion/go/lib/pathmgr"
 	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
+	"github.com/scionproto/scion/go/lib/spath/spathmeta"
 )
 
 const (
@@ -321,7 +322,7 @@ func aggrInterArrivalTime(bwr map[int]int64) (IPAvar, IPAmin, IPAavg, IPAmax int
 		}
 		average += float64(v) / float64(len(iat))
 	}
-	IPAvar = IPAmax  - int(average)
+	IPAvar = IPAmax - int(average)
 	IPAavg = int(average)
 	return
 }
@@ -329,8 +330,8 @@ func aggrInterArrivalTime(bwr map[int]int64) (IPAvar, IPAmin, IPAavg, IPAmax int
 func ChoosePath(interactive bool, pathAlgo string, local snet.Addr, remote snet.Addr) *sciond.PathReplyEntry {
 	pathMgr := snet.DefNetwork.PathResolver()
 	pathSet := pathMgr.Query(local.IA, remote.IA)
-	var appPaths []*pathmgr.AppPath
-	var selectedPath *pathmgr.AppPath
+	var appPaths []*spathmeta.AppPath
+	var selectedPath *spathmeta.AppPath
 
 	if len(pathSet) == 0 {
 		return nil
@@ -366,15 +367,15 @@ func ChoosePath(interactive bool, pathAlgo string, local snet.Addr, remote snet.
 	return entry
 }
 
-func pathSelection(pathSet pathmgr.AppPathSet, pathAlgo string) *pathmgr.AppPath {
-	var selectedPath *pathmgr.AppPath
+func pathSelection(pathSet spathmeta.AppPathSet, pathAlgo string) *spathmeta.AppPath {
+	var selectedPath *spathmeta.AppPath
 	var metric float64
 	// A path selection algorithm consists of a simple comparision function selecting the best path according
 	// to some path property and a metric function normalizing that property to a value in [0,1], where larger is better
 	// Available path selection algorithms, the metric returned must be normalized between [0,1]:
-	pathAlgos := map[string](func(pathmgr.AppPathSet) (*pathmgr.AppPath, float64)){
+	pathAlgos := map[string](func(spathmeta.AppPathSet) (*spathmeta.AppPath, float64)){
 		"shortest": selectShortestPath,
-		"mtu": selectLargestMTUPath,
+		"mtu":      selectLargestMTUPath,
 	}
 	switch pathAlgo {
 	case "shortest":
@@ -397,7 +398,7 @@ func pathSelection(pathSet pathmgr.AppPathSet, pathAlgo string) *pathmgr.AppPath
 	return selectedPath
 }
 
-func selectShortestPath(pathSet pathmgr.AppPathSet) (selectedPath *pathmgr.AppPath, metric float64) {
+func selectShortestPath(pathSet spathmeta.AppPathSet) (selectedPath *spathmeta.AppPath, metric float64) {
 	// Selects shortest path by number of hops
 	for _, appPath := range pathSet {
 		if selectedPath == nil || len(appPath.Entry.Path.Interfaces) < len(selectedPath.Entry.Path.Interfaces) {
@@ -407,13 +408,13 @@ func selectShortestPath(pathSet pathmgr.AppPathSet) (selectedPath *pathmgr.AppPa
 	metric_fn := func(rawMetric []sciond.PathInterface) (result float64) {
 		hopCount := float64(len(rawMetric))
 		midpoint := 7.0
-		result = math.Exp(-(hopCount-midpoint)) / (1 + math.Exp(-(hopCount-midpoint)))
+		result = math.Exp(-(hopCount - midpoint)) / (1 + math.Exp(-(hopCount - midpoint)))
 		return result
 	}
 	return selectedPath, metric_fn(selectedPath.Entry.Path.Interfaces)
 }
 
-func selectLargestMTUPath(pathSet pathmgr.AppPathSet) (selectedPath *pathmgr.AppPath, metric float64) {
+func selectLargestMTUPath(pathSet spathmeta.AppPathSet) (selectedPath *spathmeta.AppPath, metric float64) {
 	// Selects path with largest MTU
 	for _, appPath := range pathSet {
 		if selectedPath == nil || appPath.Entry.Path.Mtu > selectedPath.Entry.Path.Mtu {
@@ -429,4 +430,3 @@ func selectLargestMTUPath(pathSet pathmgr.AppPathSet) (selectedPath *pathmgr.App
 	}
 	return selectedPath, metric_fn(selectedPath.Entry.Path.Mtu)
 }
-

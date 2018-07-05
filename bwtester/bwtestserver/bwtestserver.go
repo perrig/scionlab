@@ -8,15 +8,17 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	log "github.com/inconshreveable/log15"
-	"github.com/kormat/fmt15"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	log "github.com/inconshreveable/log15"
+	"github.com/kormat/fmt15"
+
 	. "github.com/perrig/scionlab/bwtester/bwtestlib"
+	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
 )
 
@@ -53,6 +55,8 @@ var (
 	serverCCAddr    *snet.Addr
 	err             error
 	CCConn          *snet.Conn
+	sciondAddr      *string
+	sciondFromIA    *bool
 )
 
 func main() {
@@ -63,6 +67,8 @@ func main() {
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
 	id := flag.String("id", "bwtester", "Element ID")
 	logDir := flag.String("log_dir", "./logs", "Log directory")
+	sciondAddr = flag.String("sciond", "", "Path to sciond socket")
+	sciondFromIA = flag.Bool("sciondFromIA", false, "SCIOND socket path from IA address:ISD-AS")
 	flag.Parse()
 
 	// Setup logging
@@ -98,10 +104,17 @@ func runServer(serverCCAddrStr string) {
 		LogFatal("Unable to start server", "err", err)
 	}
 
-	sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%d.sock", serverCCAddr.IA.I, serverCCAddr.IA.A)
+	if *sciondFromIA {
+		if *sciondAddr != "" {
+			LogFatal("Only one of -sciond or -sciondFromIA can be specified")
+		}
+		*sciondAddr = sciond.GetDefaultSCIONDPath(&serverCCAddr.IA)
+	} else if *sciondAddr == "" {
+		*sciondAddr = sciond.GetDefaultSCIONDPath(nil)
+	}
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	log.Info("Starting server")
-	snet.Init(serverCCAddr.IA, sciondAddr, dispatcherAddr)
+	snet.Init(serverCCAddr.IA, *sciondAddr, dispatcherAddr)
 
 	ci := strings.LastIndex(serverCCAddrStr, ":")
 	if ci < 0 {
