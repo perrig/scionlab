@@ -7,14 +7,15 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
-	log "github.com/inconshreveable/log15"
 	"math"
 	"os"
 	"runtime/debug"
-	"strconv"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
+
+	log "github.com/inconshreveable/log15"
 
 	"github.com/scionproto/scion/go/lib/common"
 	"github.com/scionproto/scion/go/lib/sciond"
@@ -321,7 +322,7 @@ func aggrInterArrivalTime(bwr map[int]int64) (IPAvar, IPAmin, IPAavg, IPAmax int
 		}
 		average += float64(v) / float64(len(iat))
 	}
-	IPAvar = IPAmax  - int(average)
+	IPAvar = IPAmax - int(average)
 	IPAavg = int(average)
 	return
 }
@@ -374,7 +375,7 @@ func pathSelection(pathSet spathmeta.AppPathSet, pathAlgo string) *spathmeta.App
 	// Available path selection algorithms, the metric returned must be normalized between [0,1]:
 	pathAlgos := map[string](func(spathmeta.AppPathSet) (*spathmeta.AppPath, float64)){
 		"shortest": selectShortestPath,
-		"mtu": selectLargestMTUPath,
+		"mtu":      selectLargestMTUPath,
 	}
 	switch pathAlgo {
 	case "shortest":
@@ -407,7 +408,7 @@ func selectShortestPath(pathSet spathmeta.AppPathSet) (selectedPath *spathmeta.A
 	metric_fn := func(rawMetric []sciond.PathInterface) (result float64) {
 		hopCount := float64(len(rawMetric))
 		midpoint := 7.0
-		result = math.Exp(-(hopCount-midpoint)) / (1 + math.Exp(-(hopCount-midpoint)))
+		result = math.Exp(-(hopCount - midpoint)) / (1 + math.Exp(-(hopCount - midpoint)))
 		return result
 	}
 	return selectedPath, metric_fn(selectedPath.Entry.Path.Interfaces)
@@ -429,4 +430,3 @@ func selectLargestMTUPath(pathSet spathmeta.AppPathSet) (selectedPath *spathmeta
 	}
 	return selectedPath, metric_fn(selectedPath.Entry.Path.Mtu)
 }
-
