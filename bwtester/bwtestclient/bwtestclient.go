@@ -319,6 +319,8 @@ func main() {
 	} else if sciondAddr == "" {
 		sciondAddr = sciond.GetDefaultSCIONDPath(nil)
 	}
+	// sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%s.sock", clientCCAddr.IA.I, clientCCAddr.IA.A.FileFmt())
+
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	snet.Init(clientCCAddr.IA, sciondAddr, dispatcherAddr)
 
