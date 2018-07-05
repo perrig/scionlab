@@ -98,7 +98,7 @@ func runServer(serverCCAddrStr string) {
 		LogFatal("Unable to start server", "err", err)
 	}
 
-	sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%d.sock", serverCCAddr.IA.I, serverCCAddr.IA.A)
+	sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%s.sock", serverCCAddr.IA.I, serverCCAddr.IA.A.FileFmt())
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	log.Info("Starting server")
 	snet.Init(serverCCAddr.IA, sciondAddr, dispatcherAddr)
