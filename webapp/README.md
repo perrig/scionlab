@@ -110,7 +110,7 @@ This hardware-independent test will echo some remote machine stats from the Pyth
 On your remote SCION server node run (substituting your own address parameters):
 
 ```shell
-cd $GOPATH/src/github.com/perrig/scionlab/webapp/tests/imgtest/imgserver
+cd $GOPATH/src/github.com/perrig/scionlab/webapp/tests/statstest/statsserver
 python3 local-stats.py | sensorserver -s 1-15,[127.0.0.5]:35555
 ```
 

@@ -90,6 +90,13 @@ svg.svg-dials {
  background-color: #fff;
 }
 
+#bwtest-continuous .chart {
+ height: 140px;
+ width: 450px;
+ overflow: hidden;
+ float: left;
+}
+
 /* TAB CAMERAPP */
 #images {
  max-height: 280px;

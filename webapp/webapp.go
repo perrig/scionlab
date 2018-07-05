@@ -31,12 +31,19 @@ var addr = flag.String("a", "0.0.0.0", "server host address")
 var port = flag.Int("p", 8080, "server port number")
 var root = flag.String("r", ".", "file system path to browse from")
 var cmdBufLen = 1024
-var cliPortDef = "30001"
-var cliIaDef = "1-11" // TODO: should the client IA default be blank?
 var browserAddr = "127.0.0.1"
 var gopath = os.Getenv("GOPATH")
 var rootmarker = ".webapp"
 var srcpath string
+
+// default params for localhost testing
+var cliIaDef = "1-11"
+var serIaDef = "1-12"
+var cliPortDef = "30001"
+var serPortDefBwt = "30100"
+var serPortDefImg = "42002"
+var serPortDefSen = "42003"
+var serDefAddr = "127.0.0.2"
 
 var imgTemplate = `<!doctype html><html lang="en"><head></head><body>
 <a href="{{.ImgUrl}}" target="_blank"><img src="data:image/jpg;base64,{{.JpegB64}}">
@@ -54,8 +61,9 @@ func main() {
     _, srcfile, _, _ := runtime.Caller(0)
     srcpath = path.Dir(srcfile)
 
-    // generate client default
+    // generate client/server default
     genClientNodeDefaults(path.Join(srcpath, cfgFileCliDef))
+    genServerNodeDefaults(path.Join(srcpath, cfgFileSerUser))
     refreshRootDirectory()
     appsBuildCheck("bwtester")
     appsBuildCheck("camerapp")
@@ -117,6 +125,25 @@ func (c byPrefInterface) Less(i, j int) bool {
         return false
     }
     return c[i].Name < c[j].Name
+}
+
+// Creates server defaults for localhost testing
+func genServerNodeDefaults(ser_fp string) {
+    jsonBlob := []byte(`{ `)
+    json := []byte(`"bwtester": [{"name":"localhost","isdas":"` +
+        serIaDef + `", "addr":"` + serDefAddr + `","port":` + serPortDefBwt + `}], `)
+    jsonBlob = append(jsonBlob, json...)
+    json = []byte(`"camerapp": [{"name":"localhost","isdas":"` +
+        serIaDef + `", "addr":"` + serDefAddr + `","port":` + serPortDefImg + `}], `)
+    jsonBlob = append(jsonBlob, json...)
+    json = []byte(`"sensorapp": [{"name":"localhost","isdas":"` +
+        serIaDef + `", "addr":"` + serDefAddr + `","port":` + serPortDefSen + `}] `)
+    jsonBlob = append(jsonBlob, json...)
+    jsonBlob = append(jsonBlob, []byte(` }`)...)
+    err := ioutil.WriteFile(ser_fp, jsonBlob, 0644)
+    if err != nil {
+        log.Println("ioutil.WriteFile() error: " + err.Error())
+    }
 }
 
 // Queries network interfaces and writes local client SCION addresses as json

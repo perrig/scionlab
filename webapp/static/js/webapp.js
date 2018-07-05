@@ -1,8 +1,11 @@
 // https://github.com/jquery/jquery
+// https://github.com/d3/d3
 // https://github.com/twbs/bootstrap
-// https://github.com/aterrien/jQuery-Knob
+// https://github.com/aterrien/jquery-knob
 // https://github.com/lokesh-coder/pretty-checkbox
 // https://github.com/iconic/open-iconic
+// https://github.com/turuslan/hacktimer
+// https://code.highcharts.com
 
 var commandProg;
 var secMax = 10;
@@ -15,6 +18,14 @@ var bwMax = 150.00;
 var bwMin = 0.0000001;
 var feedback = {};
 var nodes = {};
+
+var granularity = 7;
+var ticks = 20 * granularity;
+var tickMs = 1000 / granularity;
+var xLeftTrimMs = 100 / granularity;
+var bwIntervalBufMs = 1000;
+var chartCS;
+var chartSC;
 
 var dial_prop_all = {
     // dial constants
@@ -35,6 +46,26 @@ var dial_prop_text = {
     'bgColor' : '#0000', // opaque
 };
 
+// instruction information
+var bwText = 'Dial values can be typed, edited, clicked, or scrolled to change.';
+var imageText = 'Execute camerapp to retrieve an image.';
+var sensorText = 'Execute sensorapp to retrieve sensor data.';
+var bwgraphsText = 'Click legend to hide/show data when continuous test is on.';
+var cont_disable_msg = 'Continuous testing disabled.'
+
+// results data extraction regex
+var reSCHdr = /(s->c results)/i;
+var reCSHdr = /(c->s results)/i;
+var reBwAtt = /(?:attempted bandwidth:\s*)([0-9.-]*)(?:\s*bps)/i;
+var reBwAch = /(?:achieved bandwidth:\s*)([0-9.-]*)(?:\s*bps)/i;
+var reItVar = /(?:interarrival time variance:\s*)([0-9.-]*)(?:\s*ms)/i;
+var reItMin = /(?:interarrival time min:\s*)([0-9.-]*)(?:\s*ms)/i;
+var reItAvg = /(?:average interarrival time:\s*)([0-9.-]*)(?:\s*ms)/i;
+var reItMax = /(?:interarrival time max:\s*)([0-9.-]*)(?:\s*ms)/i;
+var reErr1 = /(?:err=*)(["'])(?:(?=(\\?))\2.)*?\1/i;
+var reErr2 = /(?:crit msg=*)(["'])(?:(?=(\\?))\2.)*?\1/i;
+var reErr3 = /(?:error:\s*)([\s\S]*)/i;
+
 $(document).ready(function() {
     $.ajaxSetup({
         cache : false
@@ -45,20 +76,250 @@ $(document).ready(function() {
     initDials('cs');
     initDials('sc');
     $('.dial').trigger('configure', dial_prop_all);
+    initBwGraphs();
 
     setDefaults();
 });
 
-function command() {
-    // suspend any pending commands
-    $("#button_cmd").prop('disabled', true);
-    $("#button_reset").prop('disabled', true);
-    if (commandProg)
-        clearInterval(commandProg);
+function initBwGraphs() {
+    // continuous test default: off
+    $('#switch_cont').prop("checked", false);
+    $('#bwtest-graphs').css("display", "block");
+    // continuous test switch
+    $('#switch_cont').change(function() {
+        var checked = $(this).prop('checked');
+        if (checked) {
+            enableTestControls(false);
+            lockTab("bwtester");
+            // starts continuous tests
+            command(true);
+        }
+    });
 
+    var checked = $('#switch_utc').prop('checked');
+    setChartUtc(checked);
+    $('#switch_utc').change(function() {
+        var checked = $(this).prop('checked');
+        setChartUtc(checked);
+    });
+
+    // charts update on tab switch
+    $('a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
+        var activeApp = $('.nav-tabs .active > a').attr('name');
+        var isBwtest = (activeApp == "bwtester");
+        // show/hide graphs for bwtester
+        $('#bwtest-graphs').css("display", isBwtest ? "block" : "none");
+        $('#bwtest-graphs').css("display", isBwtest ? "block" : "none");
+        var checked = $('#switch_cont').prop('checked');
+        if (checked && !isBwtest) {
+            $("#switch_cont").prop('checked', false);
+            enableTestControls(true);
+            releaseTabs();
+            show_temp_err(cont_disable_msg);
+        }
+    });
+    // setup charts
+    var csColAch = $('#svg-client circle').css("fill");
+    var scColAch = $('#svg-server circle').css("fill");
+    var csColReq = $('#svg-cs line').css("stroke");
+    var scColReq = $('#svg-sc line').css("stroke");
+    chartCS = drawBwtestSingleDir('cs', 'upload (mbps)', true, csColReq,
+            csColAch);
+    chartSC = drawBwtestSingleDir('sc', 'download (mbps)', true, scColReq,
+            scColAch);
+}
+
+function setChartUtc(useUTC) {
+    Highcharts.setOptions({
+        global : {
+            useUTC : useUTC
+        }
+    });
+}
+
+function getBwParamDisplay() {
+    return getBwParamLine('cs') + ' / ' + getBwParamLine('sc');
+}
+
+function getBwParamLine(dir) {
+    return dir + ': ' + $('#dial-' + dir + '-sec').val() + 's, '
+            + $('#dial-' + dir + '-size').val() + 'b x '
+            + $('#dial-' + dir + '-pkt').val() + ' pkts, '
+            + $('#dial-' + dir + '-bw').val() + ' Mbps';
+}
+
+function drawBwtestSingleDir(dir, yAxisLabel, legend, reqCol, achCol) {
+    var div_id = dir + "-bwtest-graph";
+    var chart = Highcharts.chart(div_id, {
+        chart : {
+            type : 'scatter',
+            animation : Highcharts.svg,
+            marginRight : 10,
+            events : {
+                load : manageTickData
+            }
+        },
+        title : {
+            text : null
+        },
+        xAxis : {
+            type : 'datetime',
+            tickPixelInterval : 150,
+            crosshair : true,
+        },
+        yAxis : [ {
+            title : {
+                text : yAxisLabel
+            },
+            gridLineWidth : 1,
+            min : 0,
+        } ],
+        tooltip : {
+            enabled : true,
+            formatter : formatTooltip,
+        },
+        legend : {
+            y : -15,
+            layout : 'horizontal',
+            align : 'right',
+            verticalAlign : 'top',
+            floating : true,
+            enabled : legend,
+        },
+        credits : {
+            enabled : false,
+        },
+        exporting : {
+            enabled : false
+        },
+        plotOptions : {},
+        series : [ {
+            name : 'attempted',
+            data : loadSetupData(),
+            color : reqCol,
+            marker : {
+                symbol : 'triangle-down'
+            },
+        }, {
+            name : 'achieved',
+            data : loadSetupData(),
+            color : achCol,
+            marker : {
+                symbol : 'triangle'
+            },
+            dataLabels : {
+                enabled : true,
+                formatter : function() {
+                    return Highcharts.numberFormat(this.y, 2)
+                },
+            },
+        } ]
+    });
+    return chart;
+}
+
+function formatTooltip() {
+    var tooltip = '<b>' + this.series.name + '</b><br/>'
+            + Highcharts.dateFormat('%Y-%m-%d %H:%M:%S', this.x) + '<br/>'
+            + Highcharts.numberFormat(this.y, 2) + ' mbps';
+    if (this.point.error != null) {
+        tooltip += '<br/><b>' + this.point.error + '</b>';
+    }
+    return tooltip;
+}
+
+function loadSetupData() {
+    // points are a function of timeline speed (width & seconds)
+    // no data points on setup
+    var data = [], time = (new Date()).getTime(), i;
+    for (i = -ticks; i <= 0; i += 1) {
+        data.push({
+            x : time + i * tickMs,
+            y : null
+        });
+    }
+    return data;
+}
+
+function manageTickData() {
+    // add placeholders for time ticks
+    var series0 = this.series[0];
+    var series1 = this.series[1];
+    var lastTime = (new Date()).getTime() - (ticks * tickMs) + xLeftTrimMs;
+    var shift = false;
+    setInterval(function() {
+        var x = (new Date()).getTime(), y = null;
+        lastTime = x - (ticks * tickMs) + xLeftTrimMs;
+        // manually remove all left side ticks < left side time
+        // wait for adding hidden ticks to draw
+        var draw = false;
+        removeOldPoints(series0, lastTime, draw);
+        removeOldPoints(series1, lastTime, draw);
+        // manually add hidden right side ticks, time = now
+        // do all drawing here to avoid accordioning redraws
+        // do not shift points since we manually remove before this
+        draw = true;
+        series0.addPoint([ x, y ], draw, shift);
+        series1.addPoint([ x, y ], draw, shift);
+    }, tickMs);
+}
+
+function removeOldPoints(series, lastTime, draw) {
+    for (var i = 0; i < series.data.length; i++) {
+        if (series.data[i].x < lastTime) {
+            series.removePoint(i, draw);
+        } else {
+            break; // only need to query left-most data
+        }
+    }
+}
+
+function updateBwGraph(data) {
+    updateBwChart(chartCS, data.cs);
+    updateBwChart(chartSC, data.sc);
+}
+
+function updateBwChart(chart, dataDir) {
+    var time = (new Date()).getTime();
+    var bw = dataDir.bandwidth / 1000000;
+    var tp = dataDir.throughput / 1000000;
+    var loss = dataDir.throughput / dataDir.bandwidth;
+    // manually add visible right side ticks, time = now
+    // wait for adding hidden ticks to draw, for consistancy
+    // do not shift points since we manually remove before this
+    var draw = false;
+    var shift = false;
+    if (dataDir.error) {
+        chart.series[0].addPoint({
+            x : time,
+            y : bw,
+            error : dataDir.error,
+            color : '#f00',
+            marker : {
+                symbol : 'diamond',
+            }
+        }, draw, shift);
+    } else {
+        chart.series[0].addPoint([ time, bw ], draw, shift);
+    }
+    chart.series[1].addPoint([ time, tp ], draw, shift);
+}
+
+function command(continuous) {
+    var startTime = (new Date()).getTime();
+
+    // suspend any pending commands
+    if (commandProg) {
+        clearInterval(commandProg);
+    }
     var i = 1;
     var activeApp = $('.nav-tabs .active > a').attr('name');
-    $("#results").text("Executing ");
+    enableTestControls(false);
+    lockTab(activeApp);
+    if (!continuous) {
+        $("#results").empty();
+    }
+    $("#results").append("Executing ");
     $('#results').append(activeApp);
     $('#results').append(" client");
     commandProg = setInterval(function() {
@@ -85,54 +346,216 @@ function command() {
     if (activeApp == "camerapp") {
         // clear for new image request
         $('#images').empty();
-        $('#image_text').text('Execute camerapp to retrieve an image.');
+        $('#image_text').text(imageText);
     }
 
     console.info(JSON.stringify(form_data));
     $('#results').load('/command', form_data, function(resp, status, jqXHR) {
         console.info('resp:', resp);
         $(".stdout").scrollTop($(".stdout")[0].scrollHeight);
-        $("#button_cmd").prop('disabled', false);
-        $("#button_reset").prop('disabled', false);
         clearInterval(commandProg);
-        // check for new images once, on command complete
+        // continuous flag should force switch
+
         if (activeApp == "camerapp") {
-            if (resp.includes('Done, exiting')) {
-                setTimeout(function() {
-                    $('#image_text').load('/txtlast', form_data);
-                    $('#images').load('/imglast', form_data);
-                }, 500);
-            }
+            // check for new images once, on command complete
+            handleImageResponse(resp);
+        } else if (activeApp == "bwtester") {
+            // check for usable data for graphing
+            handleBwResponse(resp, continuous, startTime);
+        } else {
+            handleGeneralResponse();
         }
     });
     // onsubmit should always return false to override native http call
     return false;
 }
 
+function enableTestControls(enable) {
+    $("#button_cmd").prop('disabled', !enable);
+    $("#button_reset").prop('disabled', !enable);
+    $("#addl_opt").prop('disabled', !enable);
+}
+
+function lockTab(href) {
+    enableTab("bwtester", "bwtester" == href);
+    enableTab("camerapp", "camerapp" == href);
+    enableTab("sensorapp", "sensorapp" == href);
+}
+
+function releaseTabs() {
+    enableTab("bwtester", true);
+    enableTab("camerapp", true);
+    enableTab("sensorapp", true);
+}
+
+function enableTab(href, enable) {
+    if (enable) {
+        $('.nav-tabs a[href="#' + href + '"]').attr("data-toggle", "tab");
+        $('.nav-tabs a[href="#' + href + '"]').parent('li').removeClass(
+                'disabled');
+    } else {
+        $('.nav-tabs a[href="#' + href + '"]').removeAttr('data-toggle');
+        $('.nav-tabs a[href="#' + href + '"]').parent('li')
+                .addClass('disabled');
+    }
+}
+
+function handleGeneralResponse() {
+    enableTestControls(true);
+    releaseTabs();
+}
+
+function handleImageResponse(resp) {
+    if (resp.includes('Done, exiting')) {
+        setTimeout(function() {
+            $('#image_text').load('/txtlast');
+            $('#images').load('/imglast');
+        }, 500);
+    }
+    enableTestControls(true);
+    releaseTabs();
+}
+
+function handleBwResponse(resp, continuous, startTime) {
+    var data = extractBwtestRespData(resp);
+    console.log(JSON.stringify(data));
+
+    // TODO: log parsed data to metrics for papers
+
+    // provide parsed data to graph
+    updateBwGraph(data);
+
+    // check for continuous testing
+    var checked = $('#switch_cont').prop('checked');
+    if (checked) {
+        var cs = $('#dial-cs-sec').val() * 1000;
+        var sc = $('#dial-sc-sec').val() * 1000;
+        var cont = $('#bwtest_sec').val() * 1000;
+        var endTime = (new Date()).getTime();
+        var diff = endTime - startTime;
+        var max = Math.max(cs, sc, cont);
+        var interval = max > diff ? max - diff : 0;
+        console.log('Test took ' + diff + 'ms, max: ' + max
+                + 'ms, waiting another ' + interval + 'ms.');
+        setTimeout(function() {
+            var checked = $('#switch_cont').prop('checked');
+            if (checked) {
+                command(continuous);
+            }
+        }, interval);
+    } else {
+        enableTestControls(true);
+        releaseTabs();
+    }
+}
+
+function updateBwInterval() {
+    var cs = $('#dial-cs-sec').val() * 1000;
+    var sc = $('#dial-sc-sec').val() * 1000;
+    var cont = $('#bwtest_sec').val() * 1000;
+    var max = Math.max(cs, sc);
+    if (cont != (max + bwIntervalBufMs)) {
+        $('#bwtest_sec').val((max + bwIntervalBufMs) / 1000);
+    }
+}
+
+function extractBwtestRespData(resp) {
+    var dir = null;
+    var err = null;
+    var data = {
+        'cs' : {},
+        'sc' : {},
+    };
+    r = resp.split("\n");
+    for (var i = 0; i < r.length; i++) {
+        if (r[i].match(reSCHdr)) {
+            dir = 'sc';
+        }
+        if (r[i].match(reCSHdr)) {
+            dir = 'cs';
+        }
+        if (r[i].match(reBwAtt)) {
+            data[dir]['bandwidth'] = Number(r[i].match(reBwAtt)[1]);
+        }
+        if (r[i].match(reBwAch)) {
+            data[dir]['throughput'] = Number(r[i].match(reBwAch)[1]);
+        }
+        if (r[i].match(reItVar)) {
+            data[dir]['arrival_var'] = Number(r[i].match(reItVar)[1]);
+        }
+        if (r[i].match(reItMin)) {
+            data[dir]['arrival_min'] = Number(r[i].match(reItMin)[1]);
+        }
+        if (r[i].match(reItAvg)) {
+            data[dir]['arrival_avg'] = Number(r[i].match(reItAvg)[1]);
+        }
+        if (r[i].match(reItMax)) {
+            data[dir]['arrival_max'] = Number(r[i].match(reItMax)[1]);
+        }
+        // evaluate error message potential
+        if (r[i].match(reErr1)) {
+            err = r[i].match(reErr1)[0];
+        } else if (r[i].match(reErr2)) {
+            err = r[i].match(reErr2)[0];
+        } else if (r[i].match(reErr3)) {
+            err = r[i].match(reErr3)[1];
+        } else if (!err && r[i].trim().length != 0) {
+            // fallback to first line if err msg needed
+            err = r[i].trim();
+        }
+    }
+    // update with errors, if any
+    updateBwErrors(data.cs, 'cs', err);
+    updateBwErrors(data.sc, 'sc', err);
+    return data;
+}
+
+function updateBwErrors(dataDir, dir, err) {
+    if (!dataDir.throughput || !dataDir.bandwidth) {
+        dataDir.error = err;
+        dataDir.bandwidth = parseFloat(get_bw(dir));
+    }
+}
+
 function initNodes() {
-    loadNodes('cli');
-    loadNodes('ser');
+    loadNodes('cli', 'clients_default');
     $("a[data-toggle='tab']").on('shown.bs.tab', function(e) {
         updateNodeOptions('ser');
     });
     $('#sel_cli').change(function() {
         updateNode('cli');
+        // after client selection, update server options
+        loadServerNodes();
     });
     $('#sel_ser').change(function() {
         updateNode('ser');
     });
 }
 
-function loadNodes(node) {
+function loadServerNodes() {
+    // client 'lo' localhost interface selected, use localhost servers
+    var name = $('#sel_cli').find("option:selected").html();
+    if (name == "lo") {
+        loadNodes('ser', "servers_user");
+    } else {
+        loadNodes('ser', "servers_default");
+    }
+}
+
+function loadNodes(node, list) {
     var data = [ {
         name : "node_type",
-        value : ((node == 'cli') ? "clients_default" : "servers_default")
+        value : list
     } ];
     console.info(JSON.stringify(data));
     $('#sel_' + node).load('/getnodes', data, function(resp, status, jqXHR) {
         console.info('resp:', resp);
         nodes[node] = JSON.parse(resp);
         updateNodeOptions(node);
+        if (node == 'cli') {
+            // after client selection, update server options
+            loadServerNodes();
+        }
     });
 }
 
@@ -158,7 +581,7 @@ function updateNode(node) {
                 .attr('name');
         var app_nodes = nodes[node][activeApp];
         var sel = $('#sel_' + node).find("option:selected").attr('value');
-        $('#ia_' + node).val(app_nodes[sel].isdas);
+        $('#ia_' + node).val(app_nodes[sel].isdas.replace(/_/g, ":"));
         $('#addr_' + node).val(app_nodes[sel].addr);
         $('#port_' + node).val(app_nodes[sel].port);
     }
@@ -170,10 +593,10 @@ function setDefaults() {
     }
     $("#results").empty();
     $('#images').empty();
-    $('#image_text').text('Execute camerapp to retrieve an image.');
-    $('#stats_text').text('Execute sensorapp to retrieve sensor data.');
-    $('#bwtest_text').text(
-            'Dial values can be typed, edited, clicked, or scrolled to change.');
+    $('#image_text').text(imageText);
+    $('#stats_text').text(sensorText);
+    $('#bwtest_text').text(bwText);
+    $('#bwgraphs_text').text(bwgraphsText);
 
     onchange_radio('cs', 'size');
     onchange_radio('sc', 'size');
@@ -357,13 +780,11 @@ function show_range_err(dir, name, v, min, max) {
 }
 
 function show_temp_err(msg) {
-    $('#error_text').text(msg);
-    $('#error_text').removeClass('enable');
-    $('#error_text').addClass('enable');
+    $('#error_text').removeClass('enable')
+    $('#error_text').addClass('enable').text(msg);
     // remove animation once done
     $('#error_text').one('animationend', function(e) {
-        $('#error_text').removeClass('enable');
-        $('#error_text').text('');
+        $('#error_text').removeClass('enable').text('');
     });
 }
 
@@ -385,6 +806,8 @@ function onchange_sec(dir, v, min, max, lock) {
         if (!valid) {
             update_sec(dir);
         }
+        // special case: update continuous interval
+        updateBwInterval();
     }
 }
 
