@@ -93,6 +93,9 @@ function initBwGraphs() {
             lockTab("bwtester");
             // starts continuous tests
             command(true);
+        } else if (!commandProg) {
+            enableTestControls(true);
+            releaseTabs();
         }
     });
 
@@ -274,13 +277,12 @@ function removeOldPoints(series, lastTime, draw) {
     }
 }
 
-function updateBwGraph(data) {
-    updateBwChart(chartCS, data.cs);
-    updateBwChart(chartSC, data.sc);
+function updateBwGraph(data, time) {
+    updateBwChart(chartCS, data.cs, time);
+    updateBwChart(chartSC, data.sc, time);
 }
 
-function updateBwChart(chart, dataDir) {
-    var time = (new Date()).getTime();
+function updateBwChart(chart, dataDir, time) {
     var bw = dataDir.bandwidth / 1000000;
     var tp = dataDir.throughput / 1000000;
     var loss = dataDir.throughput / dataDir.bandwidth;
@@ -305,12 +307,17 @@ function updateBwChart(chart, dataDir) {
     chart.series[1].addPoint([ time, tp ], draw, shift);
 }
 
+function endProgress() {
+    clearInterval(commandProg);
+    commandProg = false;
+}
+
 function command(continuous) {
     var startTime = (new Date()).getTime();
 
     // suspend any pending commands
     if (commandProg) {
-        clearInterval(commandProg);
+        endProgress();
     }
     var i = 1;
     var activeApp = $('.nav-tabs .active > a').attr('name');
@@ -353,7 +360,7 @@ function command(continuous) {
     $('#results').load('/command', form_data, function(resp, status, jqXHR) {
         console.info('resp:', resp);
         $(".stdout").scrollTop($(".stdout")[0].scrollHeight);
-        clearInterval(commandProg);
+        endProgress();
         // continuous flag should force switch
 
         if (activeApp == "camerapp") {
@@ -417,13 +424,14 @@ function handleImageResponse(resp) {
 }
 
 function handleBwResponse(resp, continuous, startTime) {
+    var endTime = (new Date()).getTime();
     var data = extractBwtestRespData(resp);
     console.log(JSON.stringify(data));
 
     // TODO: log parsed data to metrics for papers
 
     // provide parsed data to graph
-    updateBwGraph(data);
+    updateBwGraph(data, endTime);
 
     // check for continuous testing
     var checked = $('#switch_cont').prop('checked');
@@ -431,7 +439,6 @@ function handleBwResponse(resp, continuous, startTime) {
         var cs = $('#dial-cs-sec').val() * 1000;
         var sc = $('#dial-sc-sec').val() * 1000;
         var cont = $('#bwtest_sec').val() * 1000;
-        var endTime = (new Date()).getTime();
         var diff = endTime - startTime;
         var max = Math.max(cs, sc, cont);
         var interval = max > diff ? max - diff : 0;
@@ -589,7 +596,7 @@ function updateNode(node) {
 
 function setDefaults() {
     if (commandProg) {
-        clearInterval(commandProg);
+        endProgress();
     }
     $("#results").empty();
     $('#images').empty();
