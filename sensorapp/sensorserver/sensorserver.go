@@ -62,7 +62,7 @@ func parseInput() {
 func printUsage() {
 	fmt.Println("sensorserver -s ServerSCIONAddress")
 	fmt.Println("The SCION address is specified as ISD-AS,[IP Address]:Port")
-	fmt.Println("Example SCION address 1-1,[127.0.0.1]:42002")
+	fmt.Println("Example SCION address 17-ffaa:0:1102,[192.33.93.173]:42002")
 }
 
 func main() {
