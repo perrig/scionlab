@@ -320,7 +320,7 @@ func main() {
 		sciondAddr = sciond.GetDefaultSCIONDPath(nil)
 	}
 	// sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%s.sock", clientCCAddr.IA.I, clientCCAddr.IA.A.FileFmt())
-	sciondAddr := "/run/shm/sciond/sciond.sock"
+	sciondAddr = "/run/shm/sciond/default.sock"
 
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	snet.Init(clientCCAddr.IA, sciondAddr, dispatcherAddr)
