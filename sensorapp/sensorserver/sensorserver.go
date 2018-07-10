@@ -91,7 +91,7 @@ func main() {
 	}
 
 	//sciondsciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%d.sock", server.IA.I, server.IA.A)
-	sciondAddr := "/run/shm/sciond/sciond.sock"
+	sciondAddr := "/run/shm/sciond/default.sock"
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	snet.Init(server.IA, sciondAddr, dispatcherAddr)
 
