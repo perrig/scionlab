@@ -113,10 +113,11 @@ func runServer(serverCCAddrStr string) {
 		*sciondAddr = sciond.GetDefaultSCIONDPath(nil)
 	}
 	// sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%s.sock", serverCCAddr.IA.I, serverCCAddr.IA.A.FileFmt())
+	sciondAddrStr = "/run/shm/sciond/default.sock"
 
 	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	log.Info("Starting server")
-	snet.Init(serverCCAddr.IA, *sciondAddr, dispatcherAddr)
+	snet.Init(serverCCAddr.IA, sciondAddrStr, dispatcherAddr)
 
 	ci := strings.LastIndex(serverCCAddrStr, ":")
 	if ci < 0 {
