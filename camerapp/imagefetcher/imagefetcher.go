@@ -12,6 +12,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
 )
 
@@ -157,8 +158,11 @@ func main() {
 	startTime := time.Now()
 
 	var (
-		clientAddress string
-		serverAddress string
+		clientAddress  string
+		serverAddress  string
+		sciondPath     string
+		sciondFromIA   bool
+		dispatcherPath string
 
 		err    error
 		local  *snet.Addr
@@ -169,7 +173,10 @@ func main() {
 
 	flag.StringVar(&clientAddress, "c", "", "Client SCION Address")
 	flag.StringVar(&serverAddress, "s", "", "Server SCION Address")
-
+	flag.StringVar(&sciondPath, "sciond", "", "Path to sciond socket")
+	flag.BoolVar(&sciondFromIA, "sciondFromIA", false, "SCIOND socket path from IA address:ISD-AS")
+	flag.StringVar(&dispatcherPath, "dispatcher", "/run/shm/dispatcher/default.sock",
+		"Path to dispatcher socket")
 	flag.Parse()
 
 	// Create SCION UDP socket
@@ -188,10 +195,15 @@ func main() {
 		check(fmt.Errorf("Error, server address needs to be specified with -s"))
 	}
 
-	//sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%d.sock", local.IA.I, local.IA.A)
-	sciondAddr := "/run/shm/sciond/sciond.sock"
-	dispatcherAddr := "/run/shm/dispatcher/default.sock"
-	snet.Init(local.IA, sciondAddr, dispatcherAddr)
+	if sciondFromIA {
+		if sciondPath != "" {
+			log.Fatal("Only one of -sciond or -sciondFromIA can be specified")
+		}
+		sciondPath = sciond.GetDefaultSCIONDPath(&local.IA)
+	} else if sciondPath == "" {
+		sciondPath = sciond.GetDefaultSCIONDPath(nil)
+	}
+	snet.Init(local.IA, sciondPath, dispatcherPath)
 	udpConnection, err = snet.DialSCION("udp4", local, remote)
 	check(err)
 

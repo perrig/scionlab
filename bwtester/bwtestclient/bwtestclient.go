@@ -240,8 +240,9 @@ func getPacketCount(count string) int {
 
 func main() {
 	var (
-		sciondAddr      string
+		sciondPath      string
 		sciondFromIA    bool
+		dispatcherPath  string
 		clientCCAddrStr string
 		serverCCAddrStr string
 		clientISDASIP   string
@@ -275,8 +276,10 @@ func main() {
 		receiveDone sync.Mutex // used to signal when the HandleDCConnReceive goroutine has completed
 	)
 
-	flag.StringVar(&sciondAddr, "sciond", "", "Path to sciond socket")
+	flag.StringVar(&sciondPath, "sciond", "", "Path to sciond socket")
 	flag.BoolVar(&sciondFromIA, "sciondFromIA", false, "SCIOND socket path from IA address:ISD-AS")
+	flag.StringVar(&dispatcherPath, "dispatcher", "/run/shm/dispatcher/default.sock",
+		"Path to dispatcher socket")
 	flag.StringVar(&clientCCAddrStr, "c", "", "Client SCION Address")
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
 	flag.StringVar(&serverBwpStr, "sc", DefaultBwtestParameters, "Server->Client test parameter")
@@ -312,18 +315,14 @@ func main() {
 	}
 
 	if sciondFromIA {
-		if sciondAddr != "" {
+		if sciondPath != "" {
 			LogFatal("Only one of -sciond or -sciondFromIA can be specified")
 		}
-		sciondAddr = sciond.GetDefaultSCIONDPath(&serverCCAddr.IA)
-	} else if sciondAddr == "" {
-		sciondAddr = sciond.GetDefaultSCIONDPath(nil)
+		sciondPath = sciond.GetDefaultSCIONDPath(&clientCCAddr.IA)
+	} else if sciondPath == "" {
+		sciondPath = sciond.GetDefaultSCIONDPath(nil)
 	}
-	// sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%s.sock", clientCCAddr.IA.I, clientCCAddr.IA.A.FileFmt())
-	sciondAddr = "/run/shm/sciond/default.sock"
-
-	dispatcherAddr := "/run/shm/dispatcher/default.sock"
-	snet.Init(clientCCAddr.IA, sciondAddr, dispatcherAddr)
+	snet.Init(clientCCAddr.IA, sciondPath, dispatcherPath)
 
 	var pathEntry *sciond.PathReplyEntry
 	if !serverCCAddr.IA.Eq(clientCCAddr.IA) {
