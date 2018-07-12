@@ -55,8 +55,9 @@ var (
 	serverCCAddr    *snet.Addr
 	err             error
 	CCConn          *snet.Conn
-	sciondAddr      *string
+	sciondPath      *string
 	sciondFromIA    *bool
+	dispatcherPath  *string
 )
 
 func main() {
@@ -67,8 +68,10 @@ func main() {
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
 	id := flag.String("id", "bwtester", "Element ID")
 	logDir := flag.String("log_dir", "./logs", "Log directory")
-	sciondAddr = flag.String("sciond", "", "Path to sciond socket")
+	sciondPath = flag.String("sciond", "", "Path to sciond socket")
 	sciondFromIA = flag.Bool("sciondFromIA", false, "SCIOND socket path from IA address:ISD-AS")
+	dispatcherPath = flag.String("dispatcher", "/run/shm/dispatcher/default.sock",
+		"Path to dispatcher socket")
 	flag.Parse()
 
 	// Setup logging
@@ -105,19 +108,15 @@ func runServer(serverCCAddrStr string) {
 	}
 
 	if *sciondFromIA {
-		if *sciondAddr != "" {
+		if *sciondPath != "" {
 			LogFatal("Only one of -sciond or -sciondFromIA can be specified")
 		}
-		*sciondAddr = sciond.GetDefaultSCIONDPath(&serverCCAddr.IA)
-	} else if *sciondAddr == "" {
-		*sciondAddr = sciond.GetDefaultSCIONDPath(nil)
+		*sciondPath = sciond.GetDefaultSCIONDPath(&serverCCAddr.IA)
+	} else if *sciondPath == "" {
+		*sciondPath = sciond.GetDefaultSCIONDPath(nil)
 	}
-	// sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%s.sock", serverCCAddr.IA.I, serverCCAddr.IA.A.FileFmt())
-	sciondAddrStr := "/run/shm/sciond/default.sock"
-
-	dispatcherAddr := "/run/shm/dispatcher/default.sock"
 	log.Info("Starting server")
-	snet.Init(serverCCAddr.IA, sciondAddrStr, dispatcherAddr)
+	snet.Init(serverCCAddr.IA, *sciondPath, *dispatcherPath)
 
 	ci := strings.LastIndex(serverCCAddrStr, ":")
 	if ci < 0 {

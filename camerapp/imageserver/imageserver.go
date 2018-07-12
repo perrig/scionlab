@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/scionproto/scion/go/lib/snet"
+	"github.com/scionproto/scion/go/lib/sciond"
 )
 
 const (
@@ -108,7 +109,10 @@ func main() {
 	go HandleImageFiles()
 
 	var (
-		serverAddress string
+		serverAddress  string
+		sciondPath     string
+		sciondFromIA   bool
+		dispatcherPath string
 
 		err    error
 		server *snet.Addr
@@ -118,6 +122,10 @@ func main() {
 
 	// Fetch arguments from command line
 	flag.StringVar(&serverAddress, "s", "", "Server SCION Address")
+	flag.StringVar(&sciondPath, "sciond", "", "Path to sciond socket")
+	flag.BoolVar(&sciondFromIA, "sciondFromIA", false, "SCIOND socket path from IA address:ISD-AS")
+	flag.StringVar(&dispatcherPath, "dispatcher", "/run/shm/dispatcher/default.sock",
+		"Path to dispatcher socket")
 	flag.Parse()
 
 	// Create the SCION UDP socket
@@ -129,11 +137,15 @@ func main() {
 		check(fmt.Errorf("Error, server address needs to be specified with -s"))
 	}
 
-	//sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%d.sock", server.IA.I, server.IA.A)
-	sciondAddr := "/run/shm/sciond/sciond.sock"
-	dispatcherAddr := "/run/shm/dispatcher/default.sock"
-	snet.Init(server.IA, sciondAddr, dispatcherAddr)
-
+	if sciondFromIA {
+		if sciondPath != "" {
+			log.Fatal("Only one of -sciond or -sciondFromIA can be specified")
+		}
+		sciondPath = sciond.GetDefaultSCIONDPath(&server.IA)
+	} else if sciondPath == "" {
+		sciondPath = sciond.GetDefaultSCIONDPath(nil)
+	}
+	snet.Init(server.IA, sciondPath, dispatcherPath)
 	udpConnection, err = snet.ListenSCION("udp4", server)
 	check(err)
 
