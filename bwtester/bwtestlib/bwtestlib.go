@@ -32,32 +32,32 @@ const (
 	GracePeriodSend time.Duration = time.Millisecond * 10
 	// Min packet size is 4 bytes, so that 32-bit integer fits in
 	// Ideally packet size > 4 bytes, so that part of the PRG is also in packet
-	MinPacketSize int = 4
+	MinPacketSize int64 = 4
 	// Max packet size to avoid allocation of too large a buffer, make it large enough for jumbo frames++
-	MaxPacketSize int = 66000
+	MaxPacketSize int64 = 66000
 	// Make sure the port number is a port the server application can connect to
 	MinPort uint16 = 1024
 
-	MaxTries int           = 5 // Number of times to try to reach server
+	MaxTries int64         = 5 // Number of times to try to reach server
 	Timeout  time.Duration = time.Millisecond * 500
 	MaxRTT   time.Duration = time.Millisecond * 1000
 )
 
 type BwtestParameters struct {
 	BwtestDuration time.Duration
-	PacketSize     int
-	NumPackets     int
+	PacketSize     int64
+	NumPackets     int64
 	PrgKey         []byte
 	Port           uint16
 }
 
 type BwtestResult struct {
-	NumPacketsReceived int
-	CorrectlyReceived  int
-	IPAvar             int
-	IPAmin             int
-	IPAavg             int
-	IPAmax             int
+	NumPacketsReceived int64
+	CorrectlyReceived  int64
+	IPAvar             int64
+	IPAmin             int64
+	IPAavg             int64
+	IPAmax             int64
 	// Contains the client's sending PRG key, so that the result can be uniquely identified
 	// Only requests that contain the correct key can obtain the result
 	PrgKey             []byte
@@ -164,7 +164,7 @@ func DecodeBwtestParameters(buf []byte) (*BwtestParameters, int, error) {
 
 func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 	sb := make([]byte, bwp.PacketSize)
-	i := 0
+	var i int64 = 0
 	t0 := time.Now()
 	finish := t0.Add(bwp.BwtestDuration + GracePeriodSend)
 	var interPktInterval time.Duration
@@ -185,7 +185,7 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 			time.Sleep(t2.Sub(t1))
 		}
 		// Send packet now
-		PrgFill(bwp.PrgKey, i*bwp.PacketSize, sb)
+		PrgFill(bwp.PrgKey, int(i*bwp.PacketSize), sb)
 		// Place packet number at the beginning of the packet, overwriting some PRG data
 		binary.LittleEndian.PutUint32(sb, uint32(i*bwp.PacketSize))
 		n, err := udpConnection.Write(sb)
@@ -196,7 +196,7 @@ func HandleDCConnSend(bwp *BwtestParameters, udpConnection *snet.Conn) {
 			} else {
 				Check(err)
 			}
-		} else if n < bwp.PacketSize {
+		} else if int64(n) < bwp.PacketSize {
 			Check(fmt.Errorf("Insufficient number of bytes written:", n, "instead of:", bwp.PacketSize))
 		}
 		i++
@@ -207,8 +207,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 	resLock.Lock()
 	finish := res.ExpectedFinishTime
 	resLock.Unlock()
-	numPacketsReceived := 0
-	correctlyReceived := 0
+	var numPacketsReceived, correctlyReceived int64 = 0, 0
 	InterPacketArrivalTime := make(map[int]int64)
 	_ = udpConnection.SetReadDeadline(finish)
 	// Make the receive buffer a bit larger to enable detection of packets that are too large
@@ -228,7 +227,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 			continue
 		}
 		numPacketsReceived++
-		if n != bwp.PacketSize {
+		if int64(n) != bwp.PacketSize {
 			// The packet has incorrect size, do not count as a correct packet
 			// fmt.Println("Incorrect size.", n, "bytes instead of", bwp.PacketSize)
 			continue
@@ -239,10 +238,10 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 		// Todo: create separate verif function which only compares the packet
 		// so that a discrepancy is noticed immediately without generating the
 		// entire packet
-		iv := int(binary.LittleEndian.Uint32(recBuf))
-		seqNo := iv / bwp.PacketSize
+		iv := int64(binary.LittleEndian.Uint32(recBuf))
+		seqNo := int(iv / bwp.PacketSize)
 		InterPacketArrivalTime[seqNo] = time.Now().UnixNano()
-		PrgFill(bwp.PrgKey, iv, cmpBuf)
+		PrgFill(bwp.PrgKey, int(iv), cmpBuf)
 		binary.LittleEndian.PutUint32(cmpBuf, uint32(iv))
 		if bytes.Equal(recBuf[:bwp.PacketSize], cmpBuf) {
 			if correctlyReceived == 0 {
@@ -289,7 +288,7 @@ func HandleDCConnReceive(bwp *BwtestParameters, udpConnection *snet.Conn, res *B
 	_ = udpConnection.Close()
 }
 
-func aggrInterArrivalTime(bwr map[int]int64) (IPAvar, IPAmin, IPAavg, IPAmax int) {
+func aggrInterArrivalTime(bwr map[int]int64) (IPAvar, IPAmin, IPAavg, IPAmax int64) {
 	// reverse map, mapping timestamps to sequence numbers
 	revMap := make(map[int64]int)
 	var keys []int64 // keys are the timestamps of the received packets
@@ -314,16 +313,16 @@ func aggrInterArrivalTime(bwr map[int]int64) (IPAvar, IPAmin, IPAavg, IPAmax int
 	var average float64 = 0
 	IPAmin = -1
 	for _, v := range iat {
-		if int(v) > IPAmax {
-			IPAmax = int(v)
+		if v > IPAmax {
+			IPAmax = v
 		}
-		if int(v) < IPAmin || IPAmin == -1 {
-			IPAmin = int(v)
+		if v < IPAmin || IPAmin == -1 {
+			IPAmin = v
 		}
 		average += float64(v) / float64(len(iat))
 	}
-	IPAvar = IPAmax - int(average)
-	IPAavg = int(average)
+	IPAvar = IPAmax - int64(average)
+	IPAavg = int64(average)
 	return
 }
 

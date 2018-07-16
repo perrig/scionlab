@@ -33,7 +33,7 @@ const (
 )
 
 var (
-	InferedPktSize int
+	InferedPktSize int64
 	sciondAddr     *string
 	sciondFromIA   *bool
 )
@@ -90,7 +90,7 @@ func parseBwtestParameters(s string) BwtestParameters {
 		}
 	}
 
-	var a1, a2, a3, a4 int
+	var a1, a2, a3, a4 int64
 	if a[0] == WildcardChar {
 		wildcards -= 1
 		if wildcards == 0 {
@@ -157,14 +157,14 @@ func parseBwtestParameters(s string) BwtestParameters {
 	return BwtestParameters{time.Second * time.Duration(a1), a2, a3, key, 0}
 }
 
-func parseBandwidth(bw string) int {
+func parseBandwidth(bw string) int64 {
 	rawBw := strings.Split(bw, "bps")
 	if len(rawBw[0]) < 1 {
 		fmt.Printf("Invalid bandwidth %v provided, using default value %d\n", bw, DefaultBW)
 		return DefaultBW
 	}
 
-	m := 1
+	var m int64 = 1
 	val := rawBw[0][:len(rawBw[0])-1]
 	suffix := rawBw[0][len(rawBw[0])-1:]
 	switch suffix {
@@ -190,7 +190,7 @@ func parseBandwidth(bw string) int {
 		}
 	}
 
-	a4, err := strconv.Atoi(val)
+	a4, err := strconv.ParseInt(val, 10, 64)
 	if err != nil || a4 < 0 {
 		fmt.Printf("Invalid bandwidth %v provided, using default value %d\n", val, DefaultBW)
 		return DefaultBW
@@ -199,8 +199,8 @@ func parseBandwidth(bw string) int {
 	return a4 * m
 }
 
-func getDuration(duration string) int {
-	a1, err := strconv.Atoi(duration)
+func getDuration(duration string) int64 {
+	a1, err := strconv.ParseInt(duration, 10, 64)
 	if err != nil || a1 <= 0 {
 		fmt.Printf("Invalid duration %v provided, using default value %d\n", a1, DefaultDuration)
 		a1 = DefaultDuration
@@ -213,8 +213,8 @@ func getDuration(duration string) int {
 	return a1
 }
 
-func getPacketSize(size string) int {
-	a2, err := strconv.Atoi(size)
+func getPacketSize(size string) int64 {
+	a2, err := strconv.ParseInt(size, 10, 64)
 	if err != nil {
 		fmt.Printf("Invalid packet size %v provided, using default value %d\n", a2, InferedPktSize)
 		a2 = InferedPktSize
@@ -229,8 +229,8 @@ func getPacketSize(size string) int {
 	return a2
 }
 
-func getPacketCount(count string) int {
-	a3, err := strconv.Atoi(count)
+func getPacketCount(count string) int64 {
+	a3, err := strconv.ParseInt(count, 10, 64)
 	if err != nil || a3 <= 0 {
 		fmt.Printf("Invalid packet count %v provided, using default value %d\n", a3, DefaultPktCount)
 		a3 = DefaultPktCount
@@ -247,8 +247,8 @@ func main() {
 		serverCCAddrStr string
 		clientISDASIP   string
 		serverISDASIP   string
-		clientPort      int
-		serverPort      int
+		clientPort      uint16
+		serverPort      uint16
 		// Address of client control channel (CC)
 		clientCCAddr *snet.Addr
 		// Address of server control channel (CC)
@@ -322,7 +322,8 @@ func main() {
 	} else if sciondPath == "" {
 		sciondPath = sciond.GetDefaultSCIONDPath(nil)
 	}
-	snet.Init(clientCCAddr.IA, sciondPath, dispatcherPath)
+	err = snet.Init(clientCCAddr.IA, sciondPath, dispatcherPath)
+	Check(err)
 
 	var pathEntry *sciond.PathReplyEntry
 	if !serverCCAddr.IA.Eq(clientCCAddr.IA) {
@@ -346,8 +347,9 @@ func main() {
 		Check(fmt.Errorf("Malformed server address"))
 	}
 	serverISDASIP = serverCCAddrStr[:ci]
-	serverPort, err = strconv.Atoi(serverCCAddrStr[ci+1:])
+	auxUint64, err := strconv.ParseUint(serverCCAddrStr[ci+1:], 10, 16)
 	Check(err)
+	serverPort = uint16(auxUint64)
 	// fmt.Println("serverISDASIP:", serverISDASIP)
 	// fmt.Println("serverPort:", serverPort)
 
@@ -357,16 +359,17 @@ func main() {
 		Check(fmt.Errorf("Malformed client address"))
 	}
 	clientISDASIP = clientCCAddrStr[:ci]
-	clientPort, err = strconv.Atoi(clientCCAddrStr[ci+1:])
+	auxUint64, err = strconv.ParseUint(clientCCAddrStr[ci+1:], 10, 16)
+	clientPort = uint16(auxUint64)
 	Check(err)
 	// fmt.Println("clientISDASIP:", clientISDASIP)
 	// fmt.Println("clientPort:", clientPort)
 
 	// Address of client data channel (DC)
-	clientDCAddr, err = snet.AddrFromString(clientISDASIP + ":" + strconv.Itoa(clientPort+1))
+	clientDCAddr, err = snet.AddrFromString(clientISDASIP + ":" + strconv.Itoa(int(clientPort)+1))
 	Check(err)
 	// Address of server data channel (DC)
-	serverDCAddr, err = snet.AddrFromString(serverISDASIP + ":" + strconv.Itoa(serverPort+1))
+	serverDCAddr, err = snet.AddrFromString(serverISDASIP + ":" + strconv.Itoa(int(serverPort)+1))
 	Check(err)
 	// Set path on data connection
 	if !serverDCAddr.IA.Eq(clientDCAddr.IA) {
@@ -386,7 +389,7 @@ func main() {
 
 	// update default packet size to max MTU on the selected path
 	if pathEntry != nil {
-		InferedPktSize = int(pathEntry.Path.Mtu)
+		InferedPktSize = int64(pathEntry.Path.Mtu)
 	} else {
 		// use default packet size when within same AS and pathEntry is not set
 		InferedPktSize = DefaultPktSize
@@ -431,7 +434,7 @@ func main() {
 	n = EncodeBwtestParameters(&serverBwp, pktbuf[l:])
 	l = l + n
 
-	numtries := 0
+	var numtries int64 = 0
 	for numtries < MaxTries {
 		_, err = CCConn.Write(pktbuf[:l])
 		Check(err)
@@ -487,8 +490,8 @@ func main() {
 	receiveDone.Lock()
 
 	fmt.Println("\nS->C results")
-	att := 8 * serverBwp.PacketSize * serverBwp.NumPackets / int(serverBwp.BwtestDuration/time.Second)
-	ach := 8 * serverBwp.PacketSize * res.CorrectlyReceived / int(serverBwp.BwtestDuration/time.Second)
+	att := 8 * serverBwp.PacketSize * serverBwp.NumPackets / int64(serverBwp.BwtestDuration/time.Second)
+	ach := 8 * serverBwp.PacketSize * res.CorrectlyReceived / int64(serverBwp.BwtestDuration/time.Second)
 	fmt.Printf("Attempted bandwidth: %d bps / %.2f Mbps\n", att, float64(att)/1000000)
 	fmt.Printf("Achieved bandwidth: %d bps / %.2f Mbps\n", ach, float64(ach)/1000000)
 	fmt.Println("Loss rate:", (serverBwp.NumPackets-res.CorrectlyReceived)*100/serverBwp.NumPackets, "%")
@@ -556,8 +559,8 @@ func main() {
 			continue
 		}
 		fmt.Println("\nC->S results")
-		att = 8 * clientBwp.PacketSize * clientBwp.NumPackets / int(clientBwp.BwtestDuration/time.Second)
-		ach = 8 * clientBwp.PacketSize * sres.CorrectlyReceived / int(clientBwp.BwtestDuration/time.Second)
+		att = 8 * clientBwp.PacketSize * clientBwp.NumPackets / int64(clientBwp.BwtestDuration/time.Second)
+		ach = 8 * clientBwp.PacketSize * sres.CorrectlyReceived / int64(clientBwp.BwtestDuration/time.Second)
 		fmt.Printf("Attempted bandwidth: %d bps / %.2f Mbps\n", att, float64(att)/1000000)
 		fmt.Printf("Achieved bandwidth: %d bps / %.2f Mbps\n", ach, float64(ach)/1000000)
 		fmt.Println("Loss rate:", (clientBwp.NumPackets-sres.CorrectlyReceived)*100/clientBwp.NumPackets, "%")
