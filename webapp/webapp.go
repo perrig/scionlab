@@ -37,8 +37,8 @@ var rootmarker = ".webapp"
 var srcpath string
 
 // default params for localhost testing
-var cliIaDef = "1-11"
-var serIaDef = "1-12"
+var cliIaDef = "1-ff00:0:111"
+var serIaDef = "1-ff00:0:112"
 var cliPortDef = "30001"
 var serPortDefBwt = "30100"
 var serPortDefImg = "42002"

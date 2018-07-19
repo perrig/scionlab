@@ -8,6 +8,7 @@
 // https://code.highcharts.com
 
 var commandProg;
+var intervalGraphTick;
 var secMax = 10;
 var secMin = 1;
 var sizeMax = 1400; // TODO: pull from MTU
@@ -22,10 +23,12 @@ var nodes = {};
 var granularity = 7;
 var ticks = 20 * granularity;
 var tickMs = 1000 / granularity;
-var xLeftTrimMs = 100 / granularity;
+var xLeftTrimMs = 1000 / granularity;
 var bwIntervalBufMs = 1000;
 var chartCS;
 var chartSC;
+var hasFocus = true;
+var lastTime;
 
 var dial_prop_all = {
     // dial constants
@@ -68,7 +71,8 @@ var reErr3 = /(?:error:\s*)([\s\S]*)/i;
 
 $(document).ready(function() {
     $.ajaxSetup({
-        cache : false
+        cache : false,
+        timeout : 30000,
     });
     // nodes setup
     initNodes();
@@ -79,6 +83,24 @@ $(document).ready(function() {
     initBwGraphs();
 
     setDefaults();
+});
+
+$(window).blur(function() {
+    // on lost focus, throttle down graph drawing
+    hasFocus = false;
+    console.debug('window focus:', hasFocus);
+    clearInterval(intervalGraphTick);
+    granularity = 1;
+    manageTickData();
+});
+
+$(window).focus(function() {
+    // on lost focus, throttle up graph drawing
+    hasFocus = true;
+    console.debug('window focus:', hasFocus);
+    clearInterval(intervalGraphTick);
+    granularity = 7;
+    manageTickData();
 });
 
 function initBwGraphs() {
@@ -106,12 +128,13 @@ function initBwGraphs() {
         setChartUtc(checked);
     });
 
+    updateBwInterval();
+
     // charts update on tab switch
     $('a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
         var activeApp = $('.nav-tabs .active > a').attr('name');
         var isBwtest = (activeApp == "bwtester");
         // show/hide graphs for bwtester
-        $('#bwtest-graphs').css("display", isBwtest ? "block" : "none");
         $('#bwtest-graphs').css("display", isBwtest ? "block" : "none");
         var checked = $('#switch_cont').prop('checked');
         if (checked && !isBwtest) {
@@ -130,6 +153,9 @@ function initBwGraphs() {
             csColAch);
     chartSC = drawBwtestSingleDir('sc', 'download (mbps)', true, scColReq,
             scColAch);
+
+    lastTime = (new Date()).getTime() - (ticks * tickMs) + xLeftTrimMs;
+    manageTickData();
 }
 
 function setChartUtc(useUTC) {
@@ -158,9 +184,6 @@ function drawBwtestSingleDir(dir, yAxisLabel, legend, reqCol, achCol) {
             type : 'scatter',
             animation : Highcharts.svg,
             marginRight : 10,
-            events : {
-                load : manageTickData
-            }
         },
         title : {
             text : null
@@ -246,25 +269,34 @@ function loadSetupData() {
 
 function manageTickData() {
     // add placeholders for time ticks
-    var series0 = this.series[0];
-    var series1 = this.series[1];
-    var lastTime = (new Date()).getTime() - (ticks * tickMs) + xLeftTrimMs;
-    var shift = false;
-    setInterval(function() {
-        var x = (new Date()).getTime(), y = null;
-        lastTime = x - (ticks * tickMs) + xLeftTrimMs;
-        // manually remove all left side ticks < left side time
-        // wait for adding hidden ticks to draw
-        var draw = false;
-        removeOldPoints(series0, lastTime, draw);
-        removeOldPoints(series1, lastTime, draw);
-        // manually add hidden right side ticks, time = now
-        // do all drawing here to avoid accordioning redraws
-        // do not shift points since we manually remove before this
-        draw = true;
-        series0.addPoint([ x, y ], draw, shift);
-        series1.addPoint([ x, y ], draw, shift);
+    ticks = 20 * granularity;
+    tickMs = 1000 / granularity;
+    xLeftTrimMs = 1000 / granularity;
+    intervalGraphTick = setInterval(function() {
+        var newTime = (new Date()).getTime();
+        refreshTickData(chartCS, newTime);
+        refreshTickData(chartSC, newTime);
     }, tickMs);
+}
+
+function refreshTickData(chart, newTime) {
+    var x = newTime, y = null;
+    var series0 = chart.series[0];
+    var series1 = chart.series[1];
+    var shift = false;
+
+    lastTime = x - (ticks * tickMs) + xLeftTrimMs;
+    // manually remove all left side ticks < left side time
+    // wait for adding hidden ticks to draw
+    var draw = false;
+    removeOldPoints(series0, lastTime, draw);
+    removeOldPoints(series1, lastTime, draw);
+    // manually add hidden right side ticks, time = now
+    // do all drawing here to avoid accordioning redraws
+    // do not shift points since we manually remove before this
+    draw = true;
+    series0.addPoint([ x, y ], draw, shift);
+    series1.addPoint([ x, y ], draw, shift);
 }
 
 function removeOldPoints(series, lastTime, draw) {
@@ -464,6 +496,9 @@ function updateBwInterval() {
     if (cont != (max + bwIntervalBufMs)) {
         $('#bwtest_sec').val((max + bwIntervalBufMs) / 1000);
     }
+    // update interval minimum
+    var min = Math.min(cs, sc);
+    $('#bwtest_sec').prop('min', min / 1000);
 }
 
 function extractBwtestRespData(resp) {
@@ -813,9 +848,9 @@ function onchange_sec(dir, v, min, max, lock) {
         if (!valid) {
             update_sec(dir);
         }
-        // special case: update continuous interval
-        updateBwInterval();
     }
+    // special case: update continuous interval
+    updateBwInterval();
 }
 
 function onchange_size(dir, v, min, max, lock) {
