@@ -20,3 +20,10 @@
 clients_default.json
 clients_user.json
 servers_user.json
+
+# Generated webapp data and logging
+webapp.db
+webapp/data
+.webapp
+
+*.log

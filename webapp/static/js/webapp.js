@@ -4,11 +4,11 @@
 // https://github.com/aterrien/jquery-knob
 // https://github.com/lokesh-coder/pretty-checkbox
 // https://github.com/iconic/open-iconic
-// https://github.com/turuslan/hacktimer
 // https://code.highcharts.com
 
 var commandProg;
 var intervalGraphTick;
+var intervalGraphData;
 var secMax = 10;
 var secMin = 1;
 var sizeMax = 1400; // TODO: pull from MTU
@@ -20,15 +20,18 @@ var bwMin = 0.0000001;
 var feedback = {};
 var nodes = {};
 
-var granularity = 7;
-var ticks = 20 * granularity;
+var granularity = 5;
+var xAxisSec = 20;
+var ticks = xAxisSec * granularity;
 var tickMs = 1000 / granularity;
 var xLeftTrimMs = 1000 / granularity;
 var bwIntervalBufMs = 1000;
+var dataIntervalMs = 1000;
+var progIntervalMs = 500
 var chartCS;
 var chartSC;
-var hasFocus = true;
 var lastTime;
+var lastTimeBwDb = new Date((new Date()).getTime() - (xAxisSec * 1000));
 
 var dial_prop_all = {
     // dial constants
@@ -56,19 +59,6 @@ var sensorText = 'Execute sensorapp to retrieve sensor data.';
 var bwgraphsText = 'Click legend to hide/show data when continuous test is on.';
 var cont_disable_msg = 'Continuous testing disabled.'
 
-// results data extraction regex
-var reSCHdr = /(s->c results)/i;
-var reCSHdr = /(c->s results)/i;
-var reBwAtt = /(?:attempted bandwidth:\s*)([0-9.-]*)(?:\s*bps)/i;
-var reBwAch = /(?:achieved bandwidth:\s*)([0-9.-]*)(?:\s*bps)/i;
-var reItVar = /(?:interarrival time variance:\s*)([0-9.-]*)(?:\s*ms)/i;
-var reItMin = /(?:interarrival time min:\s*)([0-9.-]*)(?:\s*ms)/i;
-var reItAvg = /(?:average interarrival time:\s*)([0-9.-]*)(?:\s*ms)/i;
-var reItMax = /(?:interarrival time max:\s*)([0-9.-]*)(?:\s*ms)/i;
-var reErr1 = /(?:err=*)(["'])(?:(?=(\\?))\2.)*?\1/i;
-var reErr2 = /(?:crit msg=*)(["'])(?:(?=(\\?))\2.)*?\1/i;
-var reErr3 = /(?:error:\s*)([\s\S]*)/i;
-
 $(document).ready(function() {
     $.ajaxSetup({
         cache : false,
@@ -85,23 +75,14 @@ $(document).ready(function() {
     setDefaults();
 });
 
-$(window).blur(function() {
-    // on lost focus, throttle down graph drawing
-    hasFocus = false;
-    console.debug('window focus:', hasFocus);
-    clearInterval(intervalGraphTick);
-    granularity = 1;
-    manageTickData();
-});
-
-$(window).focus(function() {
-    // on lost focus, throttle up graph drawing
-    hasFocus = true;
-    console.debug('window focus:', hasFocus);
-    clearInterval(intervalGraphTick);
-    granularity = 7;
-    manageTickData();
-});
+window.onbeforeunload = function(event) {
+    // detect window close to end continuous test if any
+    var checked = $('#switch_cont').prop('checked');
+    if (checked) {
+        // send command to end continuous test
+        command(false);
+    }
+};
 
 function initBwGraphs() {
     // continuous test default: off
@@ -110,15 +91,7 @@ function initBwGraphs() {
     // continuous test switch
     $('#switch_cont').change(function() {
         var checked = $(this).prop('checked');
-        if (checked) {
-            enableTestControls(false);
-            lockTab("bwtester");
-            // starts continuous tests
-            command(true);
-        } else if (!commandProg) {
-            enableTestControls(true);
-            releaseTabs();
-        }
+        handleSwitchContTest(checked);
     });
 
     var checked = $('#switch_utc').prop('checked');
@@ -132,30 +105,50 @@ function initBwGraphs() {
 
     // charts update on tab switch
     $('a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
-        var activeApp = $('.nav-tabs .active > a').attr('name');
-        var isBwtest = (activeApp == "bwtester");
-        // show/hide graphs for bwtester
-        $('#bwtest-graphs').css("display", isBwtest ? "block" : "none");
-        var checked = $('#switch_cont').prop('checked');
-        if (checked && !isBwtest) {
-            $("#switch_cont").prop('checked', false);
-            enableTestControls(true);
-            releaseTabs();
-            show_temp_err(cont_disable_msg);
-        }
+        handleSwitchTabs();
     });
     // setup charts
     var csColAch = $('#svg-client circle').css("fill");
     var scColAch = $('#svg-server circle').css("fill");
     var csColReq = $('#svg-cs line').css("stroke");
     var scColReq = $('#svg-sc line').css("stroke");
-    chartCS = drawBwtestSingleDir('cs', 'upload (mbps)', true, csColReq,
+    chartCS = drawBwtestSingleDir('cs', 'upload (mbps)', false, csColReq,
             csColAch);
     chartSC = drawBwtestSingleDir('sc', 'download (mbps)', true, scColReq,
             scColAch);
-
+    // setup interval to manage smooth ticking
     lastTime = (new Date()).getTime() - (ticks * tickMs) + xLeftTrimMs;
     manageTickData();
+    manageTestData();
+}
+
+function handleSwitchTabs() {
+    var activeApp = $('.nav-tabs .active > a').attr('name');
+    var isBwtest = (activeApp == "bwtester");
+    // show/hide graphs for bwtester
+    $('#bwtest-graphs').css("display", isBwtest ? "block" : "none");
+    var checked = $('#switch_cont').prop('checked');
+    if (checked && !isBwtest) {
+        $("#switch_cont").prop('checked', false);
+        enableTestControls(true);
+        releaseTabs();
+        show_temp_err(cont_disable_msg);
+    }
+}
+
+function handleSwitchContTest(checked) {
+    if (checked) {
+        enableTestControls(false);
+        lockTab("bwtester");
+        // starts continuous tests
+        manageTestData();
+    } else {
+        // end continuous tests
+        command(false);
+        enableTestControls(true);
+        releaseTabs();
+        clearInterval(intervalGraphData);
+    }
 }
 
 function setChartUtc(useUTC) {
@@ -210,10 +203,12 @@ function drawBwtestSingleDir(dir, yAxisLabel, legend, reqCol, achCol) {
             align : 'right',
             verticalAlign : 'top',
             floating : true,
-            enabled : legend,
+            enabled : true,
         },
         credits : {
-            enabled : false,
+            enabled : legend,
+            text : legend ? 'Download Data' : null,
+            href : legend ? './files/webapp/data/' : null,
         },
         exporting : {
             enabled : false
@@ -269,7 +264,7 @@ function loadSetupData() {
 
 function manageTickData() {
     // add placeholders for time ticks
-    ticks = 20 * granularity;
+    ticks = xAxisSec * granularity;
     tickMs = 1000 / granularity;
     xLeftTrimMs = 1000 / granularity;
     intervalGraphTick = setInterval(function() {
@@ -277,6 +272,75 @@ function manageTickData() {
         refreshTickData(chartCS, newTime);
         refreshTickData(chartSC, newTime);
     }, tickMs);
+}
+
+function manageTestData() {
+    // setup interval to request data point updates, only in range
+    now = (new Date()).getTime();
+    maxTimeBwDb = (new Date(now - (xAxisSec * 1000))).getTime();
+    lastTimeBwDb = (lastTimeBwDb < maxTimeBwDb ? maxTimeBwDb : lastTimeBwDb);
+    intervalGraphData = setInterval(function() {
+        // update continuous test parameters
+        var checked = $('#switch_cont').prop('checked');
+        if (checked) {
+            command(true);
+        }
+        now = (new Date()).getTime();
+        // update continuous results
+        var form_data = {
+            since : lastTimeBwDb
+        };
+        if (!commandProg && checked) {
+            var activeApp = $('.nav-tabs .active > a').attr('name');
+            handleStartCmdDisplay(activeApp);
+        }
+        console.info('req:', JSON.stringify(form_data));
+        $.post("/getbwbytime", form_data, function(json) {
+            d = JSON.parse(json);
+            console.info('resp:', JSON.stringify(d));
+            if (d != null) {
+                if (d.active != null) {
+                    $('#switch_cont').prop("checked", d.active);
+                    if (d.active) {
+                        enableTestControls(false);
+                        lockTab("bwtester");
+                    } else {
+                        enableTestControls(true);
+                        releaseTabs();
+                        clearInterval(intervalGraphData);
+                    }
+                }
+                if (d.log != null) {
+                    // result returned, display it and reset progress
+                    handleEndCmdDisplay(d.log);
+                }
+                if (d.graph != null) {
+                    // write data on graph
+                    for (var i = 0; i < d.graph.length; i++) {
+                        var data = {
+                            'cs' : {
+                                'bandwidth' : d.graph[i].CSBandwidth,
+                                'throughput' : d.graph[i].CSThroughput,
+                            },
+                            'sc' : {
+                                'bandwidth' : d.graph[i].SCBandwidth,
+                                'throughput' : d.graph[i].SCThroughput,
+                            },
+                        };
+                        // update with errors, if any
+                        updateBwErrors(data.cs, 'cs', d.graph[i].Error);
+                        updateBwErrors(data.sc, 'sc', d.graph[i].Error);
+
+                        console.info(JSON.stringify(data));
+                        console.info('continous bwtester', 'duration:',
+                                d.graph[i].ActualDuration, 'ms');
+                        updateBwGraph(data, d.graph[i].Inserted)
+                    }
+                }
+            }
+        });
+        lastTimeBwDb = now;
+    }, dataIntervalMs);
 }
 
 function refreshTickData(chart, newTime) {
@@ -303,8 +367,6 @@ function removeOldPoints(series, lastTime, draw) {
     for (var i = 0; i < series.data.length; i++) {
         if (series.data[i].x < lastTime) {
             series.removePoint(i, draw);
-        } else {
-            break; // only need to query left-most data
         }
     }
 }
@@ -336,7 +398,9 @@ function updateBwChart(chart, dataDir, time) {
     } else {
         chart.series[0].addPoint([ time, bw ], draw, shift);
     }
-    chart.series[1].addPoint([ time, tp ], draw, shift);
+    if (tp > 0) {
+        chart.series[1].addPoint([ time, tp ], draw, shift);
+    }
 }
 
 function endProgress() {
@@ -346,25 +410,9 @@ function endProgress() {
 
 function command(continuous) {
     var startTime = (new Date()).getTime();
-
-    // suspend any pending commands
-    if (commandProg) {
-        endProgress();
-    }
-    var i = 1;
     var activeApp = $('.nav-tabs .active > a').attr('name');
     enableTestControls(false);
     lockTab(activeApp);
-    if (!continuous) {
-        $("#results").empty();
-    }
-    $("#results").append("Executing ");
-    $('#results').append(activeApp);
-    $('#results').append(" client");
-    commandProg = setInterval(function() {
-        $('#results').append('.');
-        i += 1;
-    }, 500);
 
     // add required client/server address options
     var form_data = $('#command-form').serializeArray();
@@ -375,11 +423,11 @@ function command(continuous) {
     if (activeApp == "bwtester") {
         // add extra bwtester options required
         form_data.push({
-            name : "bw_cs",
-            value : formatBwtestCmd('-cs', 'cs')
+            name : "continuous",
+            value : continuous
         }, {
-            name : "bw_sc",
-            value : formatBwtestCmd('-sc', 'sc')
+            name : "interval",
+            value : getIntervalMax()
         });
     }
     if (activeApp == "camerapp") {
@@ -387,14 +435,19 @@ function command(continuous) {
         $('#images').empty();
         $('#image_text').text(imageText);
     }
-
-    console.info(JSON.stringify(form_data));
-    $('#results').load('/command', form_data, function(resp, status, jqXHR) {
+    if (!continuous) {
+        $("#results").empty();
+        handleStartCmdDisplay(activeApp);
+    }
+    console.info('req:', JSON.stringify(form_data));
+    $.post('/command', form_data, function(resp, status, jqXHR) {
         console.info('resp:', resp);
-        $(".stdout").scrollTop($(".stdout")[0].scrollHeight);
-        endProgress();
-        // continuous flag should force switch
-
+        if (!continuous) {
+            // continuous flag should force switch
+            var duration = (new Date()).getTime() - startTime;
+            console.info(activeApp, 'duration:', duration, 'ms');
+            handleEndCmdDisplay(resp);
+        }
         if (activeApp == "camerapp") {
             // check for new images once, on command complete
             handleImageResponse(resp);
@@ -407,6 +460,28 @@ function command(continuous) {
     });
     // onsubmit should always return false to override native http call
     return false;
+}
+
+function handleStartCmdDisplay(activeApp) {
+    var i = 1;
+    // suspend any pending commands
+    if (commandProg) {
+        endProgress();
+    }
+    // $("#results").empty();
+    $("#results").append("Executing ");
+    $('#results').append(activeApp);
+    $('#results').append(" client");
+    commandProg = setInterval(function() {
+        $('#results').append('.');
+        i += 1;
+    }, progIntervalMs);
+}
+
+function handleEndCmdDisplay(resp) {
+    $('#results').html(resp);
+    $(".stdout").scrollTop($(".stdout")[0].scrollHeight);
+    endProgress();
 }
 
 function enableTestControls(enable) {
@@ -446,45 +521,31 @@ function handleGeneralResponse() {
 
 function handleImageResponse(resp) {
     if (resp.includes('Done, exiting')) {
-        setTimeout(function() {
-            $('#image_text').load('/txtlast');
-            $('#images').load('/imglast');
-        }, 500);
+        $('#image_text').load('/txtlast');
+        $('#images').load('/imglast');
     }
     enableTestControls(true);
     releaseTabs();
 }
 
+function getIntervalMax() {
+    var cs = $('#dial-cs-sec').val();
+    var sc = $('#dial-sc-sec').val();
+    var cont = $('#bwtest_sec').val();
+    var max = Math.max(cs, sc, cont);
+    return max;
+}
+
 function handleBwResponse(resp, continuous, startTime) {
-    var endTime = (new Date()).getTime();
-    var data = extractBwtestRespData(resp);
-    console.log(JSON.stringify(data));
-
-    // TODO: log parsed data to metrics for papers
-
-    // provide parsed data to graph
-    updateBwGraph(data, endTime);
-
     // check for continuous testing
     var checked = $('#switch_cont').prop('checked');
-    if (checked) {
-        var cs = $('#dial-cs-sec').val() * 1000;
-        var sc = $('#dial-sc-sec').val() * 1000;
-        var cont = $('#bwtest_sec').val() * 1000;
-        var diff = endTime - startTime;
-        var max = Math.max(cs, sc, cont);
-        var interval = max > diff ? max - diff : 0;
-        console.log('Test took ' + diff + 'ms, max: ' + max
-                + 'ms, waiting another ' + interval + 'ms.');
-        setTimeout(function() {
-            var checked = $('#switch_cont').prop('checked');
-            if (checked) {
-                command(continuous);
-            }
-        }, interval);
-    } else {
+    if (!checked && !commandProg) {
         enableTestControls(true);
         releaseTabs();
+        clearInterval(intervalGraphData);
+    }
+    if (!continuous) {
+        manageTestData();
     }
 }
 
@@ -501,61 +562,9 @@ function updateBwInterval() {
     $('#bwtest_sec').prop('min', min / 1000);
 }
 
-function extractBwtestRespData(resp) {
-    var dir = null;
-    var err = null;
-    var data = {
-        'cs' : {},
-        'sc' : {},
-    };
-    r = resp.split("\n");
-    for (var i = 0; i < r.length; i++) {
-        if (r[i].match(reSCHdr)) {
-            dir = 'sc';
-        }
-        if (r[i].match(reCSHdr)) {
-            dir = 'cs';
-        }
-        if (r[i].match(reBwAtt)) {
-            data[dir]['bandwidth'] = Number(r[i].match(reBwAtt)[1]);
-        }
-        if (r[i].match(reBwAch)) {
-            data[dir]['throughput'] = Number(r[i].match(reBwAch)[1]);
-        }
-        if (r[i].match(reItVar)) {
-            data[dir]['arrival_var'] = Number(r[i].match(reItVar)[1]);
-        }
-        if (r[i].match(reItMin)) {
-            data[dir]['arrival_min'] = Number(r[i].match(reItMin)[1]);
-        }
-        if (r[i].match(reItAvg)) {
-            data[dir]['arrival_avg'] = Number(r[i].match(reItAvg)[1]);
-        }
-        if (r[i].match(reItMax)) {
-            data[dir]['arrival_max'] = Number(r[i].match(reItMax)[1]);
-        }
-        // evaluate error message potential
-        if (r[i].match(reErr1)) {
-            err = r[i].match(reErr1)[0];
-        } else if (r[i].match(reErr2)) {
-            err = r[i].match(reErr2)[0];
-        } else if (r[i].match(reErr3)) {
-            err = r[i].match(reErr3)[1];
-        } else if (!err && r[i].trim().length != 0) {
-            // fallback to first line if err msg needed
-            err = r[i].trim();
-        }
-    }
-    // update with errors, if any
-    updateBwErrors(data.cs, 'cs', err);
-    updateBwErrors(data.sc, 'sc', err);
-    return data;
-}
-
 function updateBwErrors(dataDir, dir, err) {
-    if (!dataDir.throughput || !dataDir.bandwidth) {
+    if (!dataDir.throughput || dataDir.throughput == 0) {
         dataDir.error = err;
-        dataDir.bandwidth = parseFloat(get_bw(dir));
     }
 }
 
@@ -647,13 +656,6 @@ function setDefaults() {
     updateNode('ser');
 }
 
-function formatBwtestCmd(arg, dir) {
-    return arg + '=' + $('#dial-' + dir + '-sec').val() + ','
-            + $('#dial-' + dir + '-size').val() + ','
-            + $('#dial-' + dir + '-pkt').val() + ',' + parseInt(get_bw(dir))
-            + 'bps';
-}
-
 function extend(obj, src) {
     for ( var key in src) {
         if (src.hasOwnProperty(key))
@@ -671,21 +673,21 @@ function initDials(dir) {
         'min' : secMin,
         'max' : secMax,
         'release' : function(v) {
-            return onchange(dir, 'sec', v);
+            return onchange(dir, 'sec', v < secMin ? secMin : v);
         },
     };
     var prop_size = {
         'min' : 1, // 1 allows < 64 to be typed
         'max' : sizeMax,
         'release' : function(v) {
-            return onchange(dir, 'size', v);
+            return onchange(dir, 'size', v < 1 ? 1 : v);
         },
     };
     var prop_pkt = {
         'min' : pktMin,
         'max' : pktMax,
         'release' : function(v) {
-            return onchange(dir, 'pkt', v);
+            return onchange(dir, 'pkt', v < pktMin ? pktMin : v);
         },
         'draw' : function() {
             // allow large font when possible
@@ -704,7 +706,7 @@ function initDials(dir) {
         'max' : bwMax,
         'step' : 0.01,
         'release' : function(v) {
-            return onchange(dir, 'bw', v);
+            return onchange(dir, 'bw', v < 0.01 ? 0.01 : v);
         },
         'format' : function(v) {
             // native formatting occasionally uses full precision
@@ -961,7 +963,7 @@ function setDialLock(dir, value, readOnly) {
     var dialId = 'dial-' + dir + '-' + value;
     $("#" + radioId).prop("checked", readOnly);
     $("#" + dialId).prop("readonly", readOnly);
-    $("#" + dialId).prop("disabled", readOnly);
+    // $("#" + dialId).prop("disabled", readOnly);
     $("#" + dialId).trigger('configure', {
         "readOnly" : readOnly ? "true" : "false",
         "inputColor" : readOnly ? "#999" : "#000",
