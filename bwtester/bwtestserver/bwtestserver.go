@@ -8,22 +8,24 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	log "github.com/inconshreveable/log15"
-	"github.com/kormat/fmt15"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	log "github.com/inconshreveable/log15"
+	"github.com/kormat/fmt15"
+
 	. "github.com/perrig/scionlab/bwtester/bwtestlib"
+	"github.com/scionproto/scion/go/lib/sciond"
 	"github.com/scionproto/scion/go/lib/snet"
 )
 
 func printUsage() {
 	fmt.Println("bwtestserver -s ServerSCIONAddress")
 	fmt.Println("The SCION address is specified as ISD-AS,[IP Address]:Port")
-	fmt.Println("Example SCION address 1-1,[127.0.0.1]:42002")
+	fmt.Println("Example SCION address 17-ffaa:0:1102,[192.33.93.173]:42002")
 }
 
 var (
@@ -53,6 +55,9 @@ var (
 	serverCCAddr    *snet.Addr
 	err             error
 	CCConn          *snet.Conn
+	sciondPath      *string
+	sciondFromIA    *bool
+	dispatcherPath  *string
 )
 
 func main() {
@@ -63,6 +68,10 @@ func main() {
 	flag.StringVar(&serverCCAddrStr, "s", "", "Server SCION Address")
 	id := flag.String("id", "bwtester", "Element ID")
 	logDir := flag.String("log_dir", "./logs", "Log directory")
+	sciondPath = flag.String("sciond", "", "Path to sciond socket")
+	sciondFromIA = flag.Bool("sciondFromIA", false, "SCIOND socket path from IA address:ISD-AS")
+	dispatcherPath = flag.String("dispatcher", "/run/shm/dispatcher/default.sock",
+		"Path to dispatcher socket")
 	flag.Parse()
 
 	// Setup logging
@@ -98,10 +107,16 @@ func runServer(serverCCAddrStr string) {
 		LogFatal("Unable to start server", "err", err)
 	}
 
-	sciondAddr := fmt.Sprintf("/run/shm/sciond/sd%d-%d.sock", serverCCAddr.IA.I, serverCCAddr.IA.A)
-	dispatcherAddr := "/run/shm/dispatcher/default.sock"
+	if *sciondFromIA {
+		if *sciondPath != "" {
+			LogFatal("Only one of -sciond or -sciondFromIA can be specified")
+		}
+		*sciondPath = sciond.GetDefaultSCIONDPath(&serverCCAddr.IA)
+	} else if *sciondPath == "" {
+		*sciondPath = sciond.GetDefaultSCIONDPath(nil)
+	}
 	log.Info("Starting server")
-	snet.Init(serverCCAddr.IA, sciondAddr, dispatcherAddr)
+	snet.Init(serverCCAddr.IA, *sciondPath, *dispatcherPath)
 
 	ci := strings.LastIndex(serverCCAddrStr, ":")
 	if ci < 0 {
