@@ -3,59 +3,58 @@
 package main
 
 import (
-    "bytes"
-    "encoding/base64"
     "flag"
     "fmt"
-    "html/template"
-    "image"
-    "image/gif"
-    "image/jpeg"
-    "image/png"
+    _ "github.com/mattn/go-sqlite3"
+    lib "github.com/perrig/scionlab/webapp/lib"
+    model "github.com/perrig/scionlab/webapp/models"
     "io"
     "io/ioutil"
     "log"
-    "net"
     "net/http"
     "os"
     "os/exec"
     "path"
-    "regexp"
     "runtime"
-    "sort"
     "strconv"
     "strings"
+    "time"
 )
 
 var addr = flag.String("a", "0.0.0.0", "server host address")
 var port = flag.Int("p", 8080, "server port number")
 var root = flag.String("r", ".", "file system path to browse from")
 var cmdBufLen = 1024
-var cliPortDef = "30001"
-var cliIaDef = "1-11" // TODO: should the client IA default be blank?
 var browserAddr = "127.0.0.1"
-var gopath = os.Getenv("GOPATH")
 var rootmarker = ".webapp"
 var srcpath string
 
-var imgTemplate = `<!doctype html><html lang="en"><head></head><body>
-<a href="{{.ImgUrl}}" target="_blank"><img src="data:image/jpg;base64,{{.JpegB64}}">
-</a></body>`
+// Ensures an inactive browser will end continuous testing
+var maxContTimeout = time.Duration(10) * time.Minute
 
-var regexImageFiles = `([^\s]+(\.(?i)(jp?g|png|gif))$)`
-
-var cfgFileCliUser = "config/clients_user.json"
-var cfgFileSerUser = "config/servers_user.json"
-var cfgFileCliDef = "config/clients_default.json"
-var cfgFileSerDef = "config/servers_default.json"
+var bwRequest *http.Request
+var bwActive bool
+var bwInterval int
+var bwTimeKeepAlive time.Time
+var bwChanDone = make(chan bool)
 
 func main() {
     flag.Parse()
     _, srcfile, _, _ := runtime.Caller(0)
     srcpath = path.Dir(srcfile)
-
-    // generate client default
-    genClientNodeDefaults(path.Join(srcpath, cfgFileCliDef))
+    // open and manage database
+    dbpath := path.Join(srcpath, "webapp.db")
+    model.InitDB(dbpath)
+    defer model.CloseDB()
+    model.CreateBwTestTable()
+    go model.MaintainDatabase()
+    dataDirPath := path.Join(srcpath, "data")
+    if _, err := os.Stat(dataDirPath); os.IsNotExist(err) {
+        os.Mkdir(dataDirPath, os.ModePerm)
+    }
+    // generate client/server default
+    lib.GenClientNodeDefaults(srcpath)
+    lib.GenServerNodeDefaults(srcpath)
     refreshRootDirectory()
     appsBuildCheck("bwtester")
     appsBuildCheck("camerapp")
@@ -64,7 +63,7 @@ func main() {
     http.HandleFunc("/", mainHandler)
     fsStatic := http.FileServer(http.Dir(path.Join(srcpath, "static")))
     http.Handle("/static/", http.StripPrefix("/static/", fsStatic))
-    fsImageFetcher := http.FileServer(http.Dir('.'))
+    fsImageFetcher := http.FileServer(http.Dir("."))
     http.Handle("/images/", http.StripPrefix("/images/", fsImageFetcher))
     fsFileBrowser := http.FileServer(http.Dir(*root))
     http.Handle("/files/", http.StripPrefix("/files/", fsFileBrowser))
@@ -73,93 +72,12 @@ func main() {
     http.HandleFunc("/imglast", findImageHandler)
     http.HandleFunc("/txtlast", findImageInfoHandler)
     http.HandleFunc("/getnodes", getNodesHandler)
+    http.HandleFunc("/getbwbytime", getBwByTimeHandler)
 
     log.Printf("Browser access at http://%s:%d.\n", browserAddr, *port)
     log.Printf("File browser root: %s\n", *root)
     log.Printf("Listening on %s:%d...\n", *addr, *port)
     log.Fatal(http.ListenAndServe(fmt.Sprintf("%s:%d", *addr, *port), nil))
-}
-
-// Reads locally generated file for this IA's name, if written
-func getLocalIa() string {
-    scionroot := "src/github.com/scionproto/scion"
-    filepath := path.Join(gopath, scionroot, "gen/ia")
-    b, err := ioutil.ReadFile(filepath)
-    if err != nil {
-        log.Println("ioutil.ReadFile() error: " + err.Error())
-        return cliIaDef
-    } else {
-        return string(b)
-    }
-}
-
-// Makes interfaces sortable, by preferred name
-type byPrefInterface []net.Interface
-
-func isInterfaceEnp(c net.Interface) bool {
-    return strings.HasPrefix(c.Name, "enp")
-}
-
-func (c byPrefInterface) Len() int {
-    return len(c)
-}
-
-func (c byPrefInterface) Swap(i, j int) {
-    c[i], c[j] = c[j], c[i]
-}
-
-func (c byPrefInterface) Less(i, j int) bool {
-    // sort "enp" interfaces first, then alphabetically
-    if isInterfaceEnp(c[i]) && !isInterfaceEnp(c[j]) {
-        return true
-    }
-    if !isInterfaceEnp(c[i]) && isInterfaceEnp(c[j]) {
-        return false
-    }
-    return c[i].Name < c[j].Name
-}
-
-// Queries network interfaces and writes local client SCION addresses as json
-func genClientNodeDefaults(cli_fp string) {
-    cisdas := getLocalIa()
-    cport := cliPortDef
-
-    // find interface addresses
-    jsonBlob := []byte(`{ "all": [ `)
-    ifaces, err := net.Interfaces()
-    if err != nil {
-        log.Println("net.Interfaces() error: " + err.Error())
-        return
-    }
-    sort.Sort(byPrefInterface(ifaces))
-    idx := 0
-    for _, i := range ifaces {
-        addrs, err := i.Addrs()
-        if err != nil {
-            log.Println("i.Addrs() error: " + err.Error())
-            continue
-        }
-        for _, a := range addrs {
-            if ipnet, ok := a.(*net.IPNet); ok {
-                if ipnet.IP.To4() != nil {
-                    if idx > 0 {
-                        jsonBlob = append(jsonBlob, []byte(`, `)...)
-                    }
-                    cname := i.Name
-                    caddr := ipnet.IP.String()
-                    jsonInterface := []byte(`{"name":"` + cname + `", "isdas":"` +
-                        cisdas + `", "addr":"` + caddr + `","port":` + cport + `}`)
-                    jsonBlob = append(jsonBlob, jsonInterface...)
-                    idx++
-                }
-            }
-        }
-    }
-    jsonBlob = append(jsonBlob, []byte(` ] }`)...)
-    err = ioutil.WriteFile(cli_fp, jsonBlob, 0644)
-    if err != nil {
-        log.Println("ioutil.WriteFile() error: " + err.Error())
-    }
 }
 
 // Handles loading index.html for user at root.
@@ -178,43 +96,143 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
     fmt.Fprint(w, string(data))
 }
 
+func parseRequest2BwtestItem(r *http.Request, appSel string) *model.BwTestItem {
+    d := new(model.BwTestItem)
+    d.SIa = r.PostFormValue("ia_ser")
+    d.CIa = r.PostFormValue("ia_cli")
+    d.SAddr = r.PostFormValue("addr_ser")
+    d.CAddr = r.PostFormValue("addr_cli")
+    d.SPort, _ = strconv.Atoi(r.PostFormValue("port_ser"))
+    d.CPort, _ = strconv.Atoi(r.PostFormValue("port_cli"))
+    if appSel == "bwtester" {
+        d.CSDuration, _ = strconv.Atoi(r.PostFormValue("dial-cs-sec"))
+        d.CSPktSize, _ = strconv.Atoi(r.PostFormValue("dial-cs-size"))
+        d.CSPackets, _ = strconv.Atoi(r.PostFormValue("dial-cs-pkt"))
+        d.CSBandwidth = d.CSPackets * d.CSPktSize / d.CSDuration * 8
+        d.CSDuration = d.CSDuration * 1000 // final storage in ms
+        d.SCDuration, _ = strconv.Atoi(r.PostFormValue("dial-sc-sec"))
+        d.SCPktSize, _ = strconv.Atoi(r.PostFormValue("dial-sc-size"))
+        d.SCPackets, _ = strconv.Atoi(r.PostFormValue("dial-sc-pkt"))
+        d.SCBandwidth = d.SCPackets * d.SCPktSize / d.SCDuration * 8
+        d.SCDuration = d.SCDuration * 1000 // final storage in ms
+    }
+    return d
+}
+
+func parseBwTest2Cmd(d *model.BwTestItem, appSel string) []string {
+    optClient := fmt.Sprintf("-c=%s,[%s]:%d", d.CIa, d.CAddr, d.CPort)
+    optServer := fmt.Sprintf("-s=%s,[%s]:%d", d.SIa, d.SAddr, d.SPort)
+    binname := getClientLocationBin(appSel)
+    command := []string{binname, optServer, optClient}
+    if appSel == "bwtester" {
+        bwCS := fmt.Sprintf("-cs=%d,%d,%d,%dbps", d.CSDuration/1000, d.CSPktSize,
+            d.CSPackets, d.CSBandwidth)
+        bwSC := fmt.Sprintf("-sc=%d,%d,%d,%dbps", d.SCDuration/1000, d.SCPktSize,
+            d.SCPackets, d.SCBandwidth)
+        command = append(command, []string{bwCS, bwSC}...)
+    }
+    if len(lib.GetLocalIa()) == 0 {
+        command = append(command, []string{"-sciondFromIA"}...)
+    }
+    return command
+}
+
 // Handles parsing SCION addresses to execute client app and write results.
 func commandHandler(w http.ResponseWriter, r *http.Request) {
+    // always parse forms for new/update cmd params
     r.ParseForm()
-    iaSer := r.PostFormValue("ia_ser")
-    iaCli := r.PostFormValue("ia_cli")
-    addrSer := r.PostFormValue("addr_ser")
-    addrCli := r.PostFormValue("addr_cli")
-    portSer := r.PostFormValue("port_ser")
-    portCli := r.PostFormValue("port_cli")
-    addlOpt := r.PostFormValue("addl_opt")
-    bwCS := r.PostFormValue("bw_cs")
-    bwSC := r.PostFormValue("bw_sc")
     appSel := r.PostFormValue("apps")
-
-    // execute scion go client app with client/server commands
-    binname := getClientLocationBin(appSel)
-    if binname == "" {
+    continuous, _ := strconv.ParseBool(r.PostFormValue("continuous"))
+    interval, _ := strconv.Atoi(r.PostFormValue("interval"))
+    if appSel == "" {
         fmt.Fprintf(w, "Unknown SCION client app. Is one selected?")
         return
     }
-    optClient := fmt.Sprintf("-c=%s", fmt.Sprintf("%s,[%s]:%s", iaCli, addrCli, portCli))
-    optServer := fmt.Sprintf("-s=%s", fmt.Sprintf("%s,[%s]:%s", iaSer, addrSer, portSer))
-    log.Printf("Executing: %s %s %s %s %s %s\n", binname, optClient, optServer, bwCS, bwSC, addlOpt)
-    cmd := exec.Command(binname, optServer, optClient, bwCS, bwSC, addlOpt)
+    if continuous || bwActive {
+        // continuous run
+        bwTimeKeepAlive = time.Now()
+        bwRequest = r
+        bwInterval = interval
+        if !bwActive {
+            // run continuous goroutine
+            bwActive = true
+            go continuousBwTest()
+        } else {
+            // continuous goroutine running?
+            if continuous {
+                // update it
+                log.Println("Updating continuous bwtest...")
+            } else {
+                // end it
+                bwActive = false
+            }
+        }
+    } else {
+        // single run
+        d := parseRequest2BwtestItem(r, appSel)
+        command := parseBwTest2Cmd(d, appSel)
 
-    // pipe command results to page
-    pipeReader, pipeWriter := io.Pipe()
-    cmd.Stdout = pipeWriter
-    cmd.Stderr = pipeWriter
-    go writeCmdOutput(w, pipeReader)
-    cmd.Run()
-    pipeWriter.Close()
+        // execute scion go client app with client/server commands
+        log.Printf("Executing: %s\n", strings.Join(command, " "))
+        cmd := exec.Command(command[0], command[1:]...)
+
+        pipeReader, pipeWriter := io.Pipe()
+        cmd.Stdout = pipeWriter
+        cmd.Stderr = pipeWriter
+        go writeCmdOutput(w, pipeReader, d, appSel)
+        cmd.Run()
+        pipeWriter.Close()
+    }
+}
+
+func continuousBwTest() {
+    log.Println("Starting continuous bwtest...")
+    defer func() {
+        log.Println("Ending continuous bwtest...")
+    }()
+    for bwActive {
+        timeUserIdle := time.Since(bwTimeKeepAlive)
+        if timeUserIdle > maxContTimeout {
+            log.Println("Last browser keep-alive over ", maxContTimeout, " ago")
+            bwActive = false
+            break
+        }
+        r := bwRequest
+        r.ParseForm()
+        appSel := r.PostFormValue("apps")
+        d := parseRequest2BwtestItem(r, appSel)
+        command := parseBwTest2Cmd(d, appSel)
+
+        log.Printf("Executing: %s\n", strings.Join(command, " "))
+        cmd := exec.Command(command[0], command[1:]...)
+
+        pipeReader, pipeWriter := io.Pipe()
+        cmd.Stdout = pipeWriter
+        cmd.Stderr = pipeWriter
+
+        go writeCmdOutput(nil, pipeReader, d, appSel)
+        start := time.Now()
+        cmd.Run()
+        pipeWriter.Close()
+        // block on cmd output finish
+        <-bwChanDone
+        end := time.Now()
+        elapsed := end.Sub(start)
+        interval := time.Duration(bwInterval) * time.Second
+        // determine sleep interval based on actual test duration
+        remaining := time.Duration(0)
+        if interval > elapsed {
+            remaining = interval - elapsed
+        }
+        log.Println("Test took", elapsed.Nanoseconds()/1e6,
+            "ms, sleeping for remaining interval:", remaining.Nanoseconds()/1e6, "ms")
+        time.Sleep(remaining)
+    }
 }
 
 func appsBuildCheck(app string) {
     binname := getClientLocationBin(app)
-    installpath := path.Join(gopath, "bin", binname)
+    installpath := path.Join(lib.GOPATH, "bin", binname)
     // check for install, and install only if needed
     if _, err := os.Stat(installpath); os.IsNotExist(err) {
         filepath := getClientLocationSrc(app)
@@ -247,17 +265,30 @@ func getClientLocationSrc(app string) string {
     var filepath string
     switch app {
     case "sensorapp":
-        filepath = path.Join(gopath, slroot, "sensorapp/sensorfetcher/sensorfetcher.go")
+        filepath = path.Join(lib.GOPATH, slroot, "sensorapp/sensorfetcher/sensorfetcher.go")
     case "camerapp":
-        filepath = path.Join(gopath, slroot, "camerapp/imagefetcher/imagefetcher.go")
+        filepath = path.Join(lib.GOPATH, slroot, "camerapp/imagefetcher/imagefetcher.go")
     case "bwtester":
-        filepath = path.Join(gopath, slroot, "bwtester/bwtestclient/bwtestclient.go")
+        filepath = path.Join(lib.GOPATH, slroot, "bwtester/bwtestclient/bwtestclient.go")
     }
     return filepath
 }
 
-// Handles piping command line output to http response writer.
-func writeCmdOutput(w http.ResponseWriter, pr *io.PipeReader) {
+// Handles piping command line output to logs, database, and http response writer.
+func writeCmdOutput(w http.ResponseWriter, pr *io.PipeReader, d *model.BwTestItem, appSel string) {
+    start := time.Now()
+    logpath := path.Join(srcpath, "webapp.log")
+    file, err := os.Create(logpath)
+    if err != nil {
+        fmt.Println(err)
+    }
+    defer func() {
+        // monitor end of test here
+        go func() { bwChanDone <- true }()
+        file.Close()
+    }()
+
+    jsonBuf := []byte(``)
     buf := make([]byte, cmdBufLen)
     for {
         n, err := pr.Read(buf)
@@ -266,159 +297,69 @@ func writeCmdOutput(w http.ResponseWriter, pr *io.PipeReader) {
             break
         }
         output := buf[0:n]
-        w.Write(output)
-        if f, ok := w.(http.Flusher); ok {
-            f.Flush()
+        jsonBuf = append(jsonBuf, output...)
+        // http write response
+        if w != nil {
+            w.Write(output)
+            if f, ok := w.(http.Flusher); ok {
+                f.Flush()
+            }
         }
         for i := 0; i < n; i++ {
             buf[i] = 0
         }
     }
-}
-
-// Handles writing jpeg image to http response writer by content-type.
-func writeJpegContentType(w http.ResponseWriter, img *image.Image) {
-    buf := new(bytes.Buffer)
-    err := jpeg.Encode(buf, *img, nil)
-    if err != nil {
-        log.Println("jpeg.Encode() error: " + err.Error())
+    if appSel == "bwtester" {
+        // parse bwtester data/error
+        lib.ExtractBwtestRespData(string(jsonBuf), d, start)
+        // store in database
+        model.StoreBwTestItem(d)
+        lib.WriteBwtestCsv(d, srcpath)
     }
-    w.Header().Set("Content-Type", "image/jpeg")
-    w.Header().Set("Content-Length", strconv.Itoa(len(buf.Bytes())))
-    _, werr := w.Write(buf.Bytes())
-    if werr != nil {
-        log.Println("w.Write() image error: " + werr.Error())
-    }
-}
-
-// Handles writing jpeg image to http response writer by image template.
-func writeJpegTemplate(w http.ResponseWriter, img *image.Image, fname string) {
-    buf := new(bytes.Buffer)
-    err := jpeg.Encode(buf, *img, nil)
+    // log file write response
+    nF, err := file.Write(jsonBuf)
     if err != nil {
-        log.Println("jpeg.Encode() error: " + err.Error())
+        fmt.Println(err)
     }
-    str := base64.StdEncoding.EncodeToString(buf.Bytes())
-    tmpl, err := template.New("image").Parse(imgTemplate)
-    if err != nil {
-        log.Println("tmpl.Parse() image error: " + err.Error())
-    } else {
-        url := fmt.Sprintf("http://%s:%d/%s/%s", browserAddr, *port, "images", fname)
-        data := map[string]interface{}{"JpegB64": str, "ImgUrl": url}
-        err := tmpl.Execute(w, data)
-        if err != nil {
-            log.Println("tmpl.Execute() image error: " + err.Error())
-        }
+    if nF != len(jsonBuf) {
+        fmt.Println("failed to write data")
     }
 }
 
-// Helper method to find most recently modified regex extension filename in dir.
-func findNewestFileExt(dir, extRegEx string) (imgFilename string, imgTimestamp int64) {
-    files, _ := ioutil.ReadDir(dir)
-    for _, f := range files {
-        fi, err := os.Stat(path.Join(dir, f.Name()))
-        if err != nil {
-            log.Println("os.Stat() error: " + err.Error())
-        }
-        matched, err := regexp.MatchString(extRegEx, f.Name())
-        if matched {
-            modTime := fi.ModTime().Unix()
-            if modTime > imgTimestamp {
-                imgTimestamp = modTime
-                imgFilename = f.Name()
-            }
-        }
-    }
-    return
+func getBwByTimeHandler(w http.ResponseWriter, r *http.Request) {
+    lib.GetBwByTimeHandler(w, r, bwActive, srcpath)
 }
 
 // Handles locating most recent image and writing text info data about it.
 func findImageInfoHandler(w http.ResponseWriter, r *http.Request) {
-    filesDir := "."
-    imgFilename, _ := findNewestFileExt(filesDir, regexImageFiles)
-    if imgFilename == "" {
-        return
-    }
-    fileText := imgFilename
-    fmt.Fprintf(w, fileText)
+    lib.FindImageInfoHandler(w, r)
 }
 
 // Handles locating most recent image formatting it for graphic display in response.
 func findImageHandler(w http.ResponseWriter, r *http.Request) {
-    filesDir := "."
-    imgFilename, _ := findNewestFileExt(filesDir, regexImageFiles)
-    if imgFilename == "" {
-        fmt.Fprint(w, "Error: Unable to find image file locally.")
-        return
-    }
-    log.Println("Found image file: " + imgFilename)
-    imgFile, err := os.Open(path.Join(filesDir, imgFilename))
-    if err != nil {
-        log.Println("os.Open() error: " + err.Error())
-    }
-    defer imgFile.Close()
-    _, imageType, err := image.Decode(imgFile)
-    if err != nil {
-        log.Println("image.Decode() error: " + err.Error())
-    }
-    log.Println("Found image type: " + imageType)
-    // reset file pointer to beginning
-    imgFile.Seek(0, 0)
-    var rawImage image.Image
-    switch imageType {
-    case "gif":
-        rawImage, err = gif.Decode(imgFile)
-    case "png":
-        rawImage, err = png.Decode(imgFile)
-    case "jpeg":
-        rawImage, err = jpeg.Decode(imgFile)
-    default:
-        panic("Unhandled image type!")
-    }
-    if err != nil {
-        log.Println("png.Decode() error: " + err.Error())
-    }
-    writeJpegTemplate(w, &rawImage, imgFilename)
+    lib.FindImageHandler(w, r, browserAddr, *port)
 }
 
 func getNodesHandler(w http.ResponseWriter, r *http.Request) {
-    r.ParseForm()
-    nodes := r.PostFormValue("node_type")
-    var fp string
-    switch nodes {
-    case "clients_default":
-        fp = path.Join(srcpath, cfgFileCliDef)
-    case "servers_default":
-        fp = path.Join(srcpath, cfgFileSerDef)
-    case "clients_user":
-        fp = path.Join(srcpath, cfgFileCliUser)
-    case "servers_user":
-        fp = path.Join(srcpath, cfgFileSerUser)
-    default:
-        panic("Unhandled nodes type!")
-    }
-    raw, err := ioutil.ReadFile(fp)
-    if err != nil {
-        log.Println("ioutil.ReadFile() error: " + err.Error())
-    }
-    fmt.Fprintf(w, string(raw))
+    lib.GetNodesHandler(w, r, srcpath)
 }
 
 // Used to workaround cache-control issues by ensuring root specified by user
 // has updated last modified date by writing a .webapp file
 func refreshRootDirectory() {
-    cli_fp := path.Join(srcpath, *root, rootmarker)
-    err := ioutil.WriteFile(cli_fp, []byte(``), 0644)
+    cliFp := path.Join(srcpath, *root, rootmarker)
+    err := ioutil.WriteFile(cliFp, []byte(``), 0644)
     if err != nil {
         log.Println("ioutil.WriteFile() error: " + err.Error())
     }
 }
 
+// FileBrowseResponseWriter holds modified reponse headers
 type FileBrowseResponseWriter struct {
     http.ResponseWriter
 }
 
-// Prevents caching directory listings based on directory last modified date.
+// WriteHeader prevents caching directory listings based on directory last modified date.
 // This is especailly a problem in Chrome, and can serve the browser stale listings.
 func (w FileBrowseResponseWriter) WriteHeader(code int) {
     if code == 200 {

@@ -1,10 +1,14 @@
 // https://github.com/jquery/jquery
+// https://github.com/d3/d3
 // https://github.com/twbs/bootstrap
-// https://github.com/aterrien/jQuery-Knob
+// https://github.com/aterrien/jquery-knob
 // https://github.com/lokesh-coder/pretty-checkbox
 // https://github.com/iconic/open-iconic
+// https://code.highcharts.com
 
 var commandProg;
+var intervalGraphTick;
+var intervalGraphData;
 var secMax = 10;
 var secMin = 1;
 var sizeMax = 1400; // TODO: pull from MTU
@@ -15,6 +19,19 @@ var bwMax = 150.00;
 var bwMin = 0.0000001;
 var feedback = {};
 var nodes = {};
+
+var granularity = 5;
+var xAxisSec = 20;
+var ticks = xAxisSec * granularity;
+var tickMs = 1000 / granularity;
+var xLeftTrimMs = 1000 / granularity;
+var bwIntervalBufMs = 1000;
+var dataIntervalMs = 1000;
+var progIntervalMs = 500
+var chartCS;
+var chartSC;
+var lastTime;
+var lastTimeBwDb = new Date((new Date()).getTime() - (xAxisSec * 1000));
 
 var dial_prop_all = {
     // dial constants
@@ -35,9 +52,17 @@ var dial_prop_text = {
     'bgColor' : '#0000', // opaque
 };
 
+// instruction information
+var bwText = 'Dial values can be typed, edited, clicked, or scrolled to change.';
+var imageText = 'Execute camerapp to retrieve an image.';
+var sensorText = 'Execute sensorapp to retrieve sensor data.';
+var bwgraphsText = 'Click legend to hide/show data when continuous test is on.';
+var cont_disable_msg = 'Continuous testing disabled.'
+
 $(document).ready(function() {
     $.ajaxSetup({
-        cache : false
+        cache : false,
+        timeout : 30000,
     });
     // nodes setup
     initNodes();
@@ -45,26 +70,349 @@ $(document).ready(function() {
     initDials('cs');
     initDials('sc');
     $('.dial').trigger('configure', dial_prop_all);
+    initBwGraphs();
 
     setDefaults();
 });
 
-function command() {
-    // suspend any pending commands
-    $("#button_cmd").prop('disabled', true);
-    $("#button_reset").prop('disabled', true);
-    if (commandProg)
-        clearInterval(commandProg);
+window.onbeforeunload = function(event) {
+    // detect window close to end continuous test if any
+    var checked = $('#switch_cont').prop('checked');
+    if (checked) {
+        // send command to end continuous test
+        command(false);
+    }
+};
 
-    var i = 1;
+function initBwGraphs() {
+    // continuous test default: off
+    $('#switch_cont').prop("checked", false);
+    $('#bwtest-graphs').css("display", "block");
+    // continuous test switch
+    $('#switch_cont').change(function() {
+        var checked = $(this).prop('checked');
+        handleSwitchContTest(checked);
+    });
+
+    var checked = $('#switch_utc').prop('checked');
+    setChartUtc(checked);
+    $('#switch_utc').change(function() {
+        var checked = $(this).prop('checked');
+        setChartUtc(checked);
+    });
+
+    updateBwInterval();
+
+    // charts update on tab switch
+    $('a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
+        handleSwitchTabs();
+    });
+    // setup charts
+    var csColAch = $('#svg-client circle').css("fill");
+    var scColAch = $('#svg-server circle').css("fill");
+    var csColReq = $('#svg-cs line').css("stroke");
+    var scColReq = $('#svg-sc line').css("stroke");
+    chartCS = drawBwtestSingleDir('cs', 'upload (mbps)', false, csColReq,
+            csColAch);
+    chartSC = drawBwtestSingleDir('sc', 'download (mbps)', true, scColReq,
+            scColAch);
+    // setup interval to manage smooth ticking
+    lastTime = (new Date()).getTime() - (ticks * tickMs) + xLeftTrimMs;
+    manageTickData();
+    manageTestData();
+}
+
+function handleSwitchTabs() {
     var activeApp = $('.nav-tabs .active > a').attr('name');
-    $("#results").text("Executing ");
-    $('#results').append(activeApp);
-    $('#results').append(" client");
-    commandProg = setInterval(function() {
-        $('#results').append('.');
-        i += 1;
-    }, 500);
+    var isBwtest = (activeApp == "bwtester");
+    // show/hide graphs for bwtester
+    $('#bwtest-graphs').css("display", isBwtest ? "block" : "none");
+    var checked = $('#switch_cont').prop('checked');
+    if (checked && !isBwtest) {
+        $("#switch_cont").prop('checked', false);
+        enableTestControls(true);
+        releaseTabs();
+        show_temp_err(cont_disable_msg);
+    }
+}
+
+function handleSwitchContTest(checked) {
+    if (checked) {
+        enableTestControls(false);
+        lockTab("bwtester");
+        // starts continuous tests
+        manageTestData();
+    } else {
+        // end continuous tests
+        command(false);
+        enableTestControls(true);
+        releaseTabs();
+        clearInterval(intervalGraphData);
+    }
+}
+
+function setChartUtc(useUTC) {
+    Highcharts.setOptions({
+        global : {
+            useUTC : useUTC
+        }
+    });
+}
+
+function getBwParamDisplay() {
+    return getBwParamLine('cs') + ' / ' + getBwParamLine('sc');
+}
+
+function getBwParamLine(dir) {
+    return dir + ': ' + $('#dial-' + dir + '-sec').val() + 's, '
+            + $('#dial-' + dir + '-size').val() + 'b x '
+            + $('#dial-' + dir + '-pkt').val() + ' pkts, '
+            + $('#dial-' + dir + '-bw').val() + ' Mbps';
+}
+
+function drawBwtestSingleDir(dir, yAxisLabel, legend, reqCol, achCol) {
+    var div_id = dir + "-bwtest-graph";
+    var chart = Highcharts.chart(div_id, {
+        chart : {
+            type : 'scatter',
+            animation : Highcharts.svg,
+            marginRight : 10,
+        },
+        title : {
+            text : null
+        },
+        xAxis : {
+            type : 'datetime',
+            tickPixelInterval : 150,
+            crosshair : true,
+        },
+        yAxis : [ {
+            title : {
+                text : yAxisLabel
+            },
+            gridLineWidth : 1,
+            min : 0,
+        } ],
+        tooltip : {
+            enabled : true,
+            formatter : formatTooltip,
+        },
+        legend : {
+            y : -15,
+            layout : 'horizontal',
+            align : 'right',
+            verticalAlign : 'top',
+            floating : true,
+            enabled : true,
+        },
+        credits : {
+            enabled : legend,
+            text : legend ? 'Download Data' : null,
+            href : legend ? './files/webapp/data/' : null,
+        },
+        exporting : {
+            enabled : false
+        },
+        plotOptions : {},
+        series : [ {
+            name : 'attempted',
+            data : loadSetupData(),
+            color : reqCol,
+            marker : {
+                symbol : 'triangle-down'
+            },
+        }, {
+            name : 'achieved',
+            data : loadSetupData(),
+            color : achCol,
+            marker : {
+                symbol : 'triangle'
+            },
+            dataLabels : {
+                enabled : true,
+                formatter : function() {
+                    return Highcharts.numberFormat(this.y, 2)
+                },
+            },
+        } ]
+    });
+    return chart;
+}
+
+function formatTooltip() {
+    var tooltip = '<b>' + this.series.name + '</b><br/>'
+            + Highcharts.dateFormat('%Y-%m-%d %H:%M:%S', this.x) + '<br/>'
+            + Highcharts.numberFormat(this.y, 2) + ' mbps';
+    if (this.point.error != null) {
+        tooltip += '<br/><b>' + this.point.error + '</b>';
+    }
+    return tooltip;
+}
+
+function loadSetupData() {
+    // points are a function of timeline speed (width & seconds)
+    // no data points on setup
+    var data = [], time = (new Date()).getTime(), i;
+    for (i = -ticks; i <= 0; i += 1) {
+        data.push({
+            x : time + i * tickMs,
+            y : null
+        });
+    }
+    return data;
+}
+
+function manageTickData() {
+    // add placeholders for time ticks
+    ticks = xAxisSec * granularity;
+    tickMs = 1000 / granularity;
+    xLeftTrimMs = 1000 / granularity;
+    intervalGraphTick = setInterval(function() {
+        var newTime = (new Date()).getTime();
+        refreshTickData(chartCS, newTime);
+        refreshTickData(chartSC, newTime);
+    }, tickMs);
+}
+
+function manageTestData() {
+    // setup interval to request data point updates, only in range
+    now = (new Date()).getTime();
+    maxTimeBwDb = (new Date(now - (xAxisSec * 1000))).getTime();
+    lastTimeBwDb = (lastTimeBwDb < maxTimeBwDb ? maxTimeBwDb : lastTimeBwDb);
+    intervalGraphData = setInterval(function() {
+        // update continuous test parameters
+        var checked = $('#switch_cont').prop('checked');
+        if (checked) {
+            command(true);
+        }
+        now = (new Date()).getTime();
+        // update continuous results
+        var form_data = {
+            since : lastTimeBwDb
+        };
+        if (!commandProg && checked) {
+            var activeApp = $('.nav-tabs .active > a').attr('name');
+            handleStartCmdDisplay(activeApp);
+        }
+        console.info('req:', JSON.stringify(form_data));
+        $.post("/getbwbytime", form_data, function(json) {
+            d = JSON.parse(json);
+            console.info('resp:', JSON.stringify(d));
+            if (d != null) {
+                if (d.active != null) {
+                    $('#switch_cont').prop("checked", d.active);
+                    if (d.active) {
+                        enableTestControls(false);
+                        lockTab("bwtester");
+                    } else {
+                        enableTestControls(true);
+                        releaseTabs();
+                        clearInterval(intervalGraphData);
+                    }
+                }
+                if (d.log != null) {
+                    // result returned, display it and reset progress
+                    handleEndCmdDisplay(d.log);
+                }
+                if (d.graph != null) {
+                    // write data on graph
+                    for (var i = 0; i < d.graph.length; i++) {
+                        var data = {
+                            'cs' : {
+                                'bandwidth' : d.graph[i].CSBandwidth,
+                                'throughput' : d.graph[i].CSThroughput,
+                            },
+                            'sc' : {
+                                'bandwidth' : d.graph[i].SCBandwidth,
+                                'throughput' : d.graph[i].SCThroughput,
+                            },
+                        };
+                        // update with errors, if any
+                        updateBwErrors(data.cs, 'cs', d.graph[i].Error);
+                        updateBwErrors(data.sc, 'sc', d.graph[i].Error);
+
+                        console.info(JSON.stringify(data));
+                        console.info('continous bwtester', 'duration:',
+                                d.graph[i].ActualDuration, 'ms');
+                        updateBwGraph(data, d.graph[i].Inserted)
+                    }
+                }
+            }
+        });
+        lastTimeBwDb = now;
+    }, dataIntervalMs);
+}
+
+function refreshTickData(chart, newTime) {
+    var x = newTime, y = null;
+    var series0 = chart.series[0];
+    var series1 = chart.series[1];
+    var shift = false;
+
+    lastTime = x - (ticks * tickMs) + xLeftTrimMs;
+    // manually remove all left side ticks < left side time
+    // wait for adding hidden ticks to draw
+    var draw = false;
+    removeOldPoints(series0, lastTime, draw);
+    removeOldPoints(series1, lastTime, draw);
+    // manually add hidden right side ticks, time = now
+    // do all drawing here to avoid accordioning redraws
+    // do not shift points since we manually remove before this
+    draw = true;
+    series0.addPoint([ x, y ], draw, shift);
+    series1.addPoint([ x, y ], draw, shift);
+}
+
+function removeOldPoints(series, lastTime, draw) {
+    for (var i = 0; i < series.data.length; i++) {
+        if (series.data[i].x < lastTime) {
+            series.removePoint(i, draw);
+        }
+    }
+}
+
+function updateBwGraph(data, time) {
+    updateBwChart(chartCS, data.cs, time);
+    updateBwChart(chartSC, data.sc, time);
+}
+
+function updateBwChart(chart, dataDir, time) {
+    var bw = dataDir.bandwidth / 1000000;
+    var tp = dataDir.throughput / 1000000;
+    var loss = dataDir.throughput / dataDir.bandwidth;
+    // manually add visible right side ticks, time = now
+    // wait for adding hidden ticks to draw, for consistancy
+    // do not shift points since we manually remove before this
+    var draw = false;
+    var shift = false;
+    if (dataDir.error) {
+        chart.series[0].addPoint({
+            x : time,
+            y : bw,
+            error : dataDir.error,
+            color : '#f00',
+            marker : {
+                symbol : 'diamond',
+            }
+        }, draw, shift);
+    } else {
+        chart.series[0].addPoint([ time, bw ], draw, shift);
+    }
+    if (tp > 0) {
+        chart.series[1].addPoint([ time, tp ], draw, shift);
+    }
+}
+
+function endProgress() {
+    clearInterval(commandProg);
+    commandProg = false;
+}
+
+function command(continuous) {
+    var startTime = (new Date()).getTime();
+    var activeApp = $('.nav-tabs .active > a').attr('name');
+    enableTestControls(false);
+    lockTab(activeApp);
 
     // add required client/server address options
     var form_data = $('#command-form').serializeArray();
@@ -75,64 +423,190 @@ function command() {
     if (activeApp == "bwtester") {
         // add extra bwtester options required
         form_data.push({
-            name : "bw_cs",
-            value : formatBwtestCmd('-cs', 'cs')
+            name : "continuous",
+            value : continuous
         }, {
-            name : "bw_sc",
-            value : formatBwtestCmd('-sc', 'sc')
+            name : "interval",
+            value : getIntervalMax()
         });
     }
     if (activeApp == "camerapp") {
         // clear for new image request
         $('#images').empty();
-        $('#image_text').text('Execute camerapp to retrieve an image.');
+        $('#image_text').text(imageText);
     }
-
-    console.info(JSON.stringify(form_data));
-    $('#results').load('/command', form_data, function(resp, status, jqXHR) {
+    if (!continuous) {
+        $("#results").empty();
+        handleStartCmdDisplay(activeApp);
+    }
+    console.info('req:', JSON.stringify(form_data));
+    $.post('/command', form_data, function(resp, status, jqXHR) {
         console.info('resp:', resp);
-        $(".stdout").scrollTop($(".stdout")[0].scrollHeight);
-        $("#button_cmd").prop('disabled', false);
-        $("#button_reset").prop('disabled', false);
-        clearInterval(commandProg);
-        // check for new images once, on command complete
+        if (!continuous) {
+            // continuous flag should force switch
+            var duration = (new Date()).getTime() - startTime;
+            console.info(activeApp, 'duration:', duration, 'ms');
+            handleEndCmdDisplay(resp);
+        }
         if (activeApp == "camerapp") {
-            if (resp.includes('Done, exiting')) {
-                setTimeout(function() {
-                    $('#image_text').load('/txtlast', form_data);
-                    $('#images').load('/imglast', form_data);
-                }, 500);
-            }
+            // check for new images once, on command complete
+            handleImageResponse(resp);
+        } else if (activeApp == "bwtester") {
+            // check for usable data for graphing
+            handleBwResponse(resp, continuous, startTime);
+        } else {
+            handleGeneralResponse();
         }
     });
     // onsubmit should always return false to override native http call
     return false;
 }
 
+function handleStartCmdDisplay(activeApp) {
+    var i = 1;
+    // suspend any pending commands
+    if (commandProg) {
+        endProgress();
+    }
+    // $("#results").empty();
+    $("#results").append("Executing ");
+    $('#results').append(activeApp);
+    $('#results').append(" client");
+    commandProg = setInterval(function() {
+        $('#results').append('.');
+        i += 1;
+    }, progIntervalMs);
+}
+
+function handleEndCmdDisplay(resp) {
+    $('#results').html(resp);
+    $(".stdout").scrollTop($(".stdout")[0].scrollHeight);
+    endProgress();
+}
+
+function enableTestControls(enable) {
+    $("#button_cmd").prop('disabled', !enable);
+    $("#button_reset").prop('disabled', !enable);
+    $("#addl_opt").prop('disabled', !enable);
+}
+
+function lockTab(href) {
+    enableTab("bwtester", "bwtester" == href);
+    enableTab("camerapp", "camerapp" == href);
+    enableTab("sensorapp", "sensorapp" == href);
+}
+
+function releaseTabs() {
+    enableTab("bwtester", true);
+    enableTab("camerapp", true);
+    enableTab("sensorapp", true);
+}
+
+function enableTab(href, enable) {
+    if (enable) {
+        $('.nav-tabs a[href="#' + href + '"]').attr("data-toggle", "tab");
+        $('.nav-tabs a[href="#' + href + '"]').parent('li').removeClass(
+                'disabled');
+    } else {
+        $('.nav-tabs a[href="#' + href + '"]').removeAttr('data-toggle');
+        $('.nav-tabs a[href="#' + href + '"]').parent('li')
+                .addClass('disabled');
+    }
+}
+
+function handleGeneralResponse() {
+    enableTestControls(true);
+    releaseTabs();
+}
+
+function handleImageResponse(resp) {
+    if (resp.includes('Done, exiting')) {
+        $('#image_text').load('/txtlast');
+        $('#images').load('/imglast');
+    }
+    enableTestControls(true);
+    releaseTabs();
+}
+
+function getIntervalMax() {
+    var cs = $('#dial-cs-sec').val();
+    var sc = $('#dial-sc-sec').val();
+    var cont = $('#bwtest_sec').val();
+    var max = Math.max(cs, sc, cont);
+    return max;
+}
+
+function handleBwResponse(resp, continuous, startTime) {
+    // check for continuous testing
+    var checked = $('#switch_cont').prop('checked');
+    if (!checked && !commandProg) {
+        enableTestControls(true);
+        releaseTabs();
+        clearInterval(intervalGraphData);
+    }
+    if (!continuous) {
+        manageTestData();
+    }
+}
+
+function updateBwInterval() {
+    var cs = $('#dial-cs-sec').val() * 1000;
+    var sc = $('#dial-sc-sec').val() * 1000;
+    var cont = $('#bwtest_sec').val() * 1000;
+    var max = Math.max(cs, sc);
+    if (cont != (max + bwIntervalBufMs)) {
+        $('#bwtest_sec').val((max + bwIntervalBufMs) / 1000);
+    }
+    // update interval minimum
+    var min = Math.min(cs, sc);
+    $('#bwtest_sec').prop('min', min / 1000);
+}
+
+function updateBwErrors(dataDir, dir, err) {
+    if (!dataDir.throughput || dataDir.throughput == 0) {
+        dataDir.error = err;
+    }
+}
+
 function initNodes() {
-    loadNodes('cli');
-    loadNodes('ser');
+    loadNodes('cli', 'clients_default');
     $("a[data-toggle='tab']").on('shown.bs.tab', function(e) {
         updateNodeOptions('ser');
     });
     $('#sel_cli').change(function() {
         updateNode('cli');
+        // after client selection, update server options
+        loadServerNodes();
     });
     $('#sel_ser').change(function() {
         updateNode('ser');
     });
 }
 
-function loadNodes(node) {
+function loadServerNodes() {
+    // client 'lo' localhost interface selected, use localhost servers
+    var name = $('#sel_cli').find("option:selected").html();
+    if (name == "lo") {
+        loadNodes('ser', "servers_user");
+    } else {
+        loadNodes('ser', "servers_default");
+    }
+}
+
+function loadNodes(node, list) {
     var data = [ {
         name : "node_type",
-        value : ((node == 'cli') ? "clients_default" : "servers_default")
+        value : list
     } ];
     console.info(JSON.stringify(data));
     $('#sel_' + node).load('/getnodes', data, function(resp, status, jqXHR) {
         console.info('resp:', resp);
         nodes[node] = JSON.parse(resp);
         updateNodeOptions(node);
+        if (node == 'cli') {
+            // after client selection, update server options
+            loadServerNodes();
+        }
     });
 }
 
@@ -166,27 +640,20 @@ function updateNode(node) {
 
 function setDefaults() {
     if (commandProg) {
-        clearInterval(commandProg);
+        endProgress();
     }
     $("#results").empty();
     $('#images').empty();
-    $('#image_text').text('Execute camerapp to retrieve an image.');
-    $('#stats_text').text('Execute sensorapp to retrieve sensor data.');
-    $('#bwtest_text').text(
-            'Dial values can be typed, edited, clicked, or scrolled to change.');
+    $('#image_text').text(imageText);
+    $('#stats_text').text(sensorText);
+    $('#bwtest_text').text(bwText);
+    $('#bwgraphs_text').text(bwgraphsText);
 
     onchange_radio('cs', 'size');
     onchange_radio('sc', 'size');
 
     updateNode('cli');
     updateNode('ser');
-}
-
-function formatBwtestCmd(arg, dir) {
-    return arg + '=' + $('#dial-' + dir + '-sec').val() + ','
-            + $('#dial-' + dir + '-size').val() + ','
-            + $('#dial-' + dir + '-pkt').val() + ',' + parseInt(get_bw(dir))
-            + 'bps';
 }
 
 function extend(obj, src) {
@@ -206,21 +673,21 @@ function initDials(dir) {
         'min' : secMin,
         'max' : secMax,
         'release' : function(v) {
-            return onchange(dir, 'sec', v);
+            return onchange(dir, 'sec', v < secMin ? secMin : v);
         },
     };
     var prop_size = {
         'min' : 1, // 1 allows < 64 to be typed
         'max' : sizeMax,
         'release' : function(v) {
-            return onchange(dir, 'size', v);
+            return onchange(dir, 'size', v < 1 ? 1 : v);
         },
     };
     var prop_pkt = {
         'min' : pktMin,
         'max' : pktMax,
         'release' : function(v) {
-            return onchange(dir, 'pkt', v);
+            return onchange(dir, 'pkt', v < pktMin ? pktMin : v);
         },
         'draw' : function() {
             // allow large font when possible
@@ -239,7 +706,7 @@ function initDials(dir) {
         'max' : bwMax,
         'step' : 0.01,
         'release' : function(v) {
-            return onchange(dir, 'bw', v);
+            return onchange(dir, 'bw', v < 0.01 ? 0.01 : v);
         },
         'format' : function(v) {
             // native formatting occasionally uses full precision
@@ -357,13 +824,11 @@ function show_range_err(dir, name, v, min, max) {
 }
 
 function show_temp_err(msg) {
-    $('#error_text').text(msg);
-    $('#error_text').removeClass('enable');
-    $('#error_text').addClass('enable');
+    $('#error_text').removeClass('enable')
+    $('#error_text').addClass('enable').text(msg);
     // remove animation once done
     $('#error_text').one('animationend', function(e) {
-        $('#error_text').removeClass('enable');
-        $('#error_text').text('');
+        $('#error_text').removeClass('enable').text('');
     });
 }
 
@@ -386,6 +851,8 @@ function onchange_sec(dir, v, min, max, lock) {
             update_sec(dir);
         }
     }
+    // special case: update continuous interval
+    updateBwInterval();
 }
 
 function onchange_size(dir, v, min, max, lock) {
@@ -496,7 +963,7 @@ function setDialLock(dir, value, readOnly) {
     var dialId = 'dial-' + dir + '-' + value;
     $("#" + radioId).prop("checked", readOnly);
     $("#" + dialId).prop("readonly", readOnly);
-    $("#" + dialId).prop("disabled", readOnly);
+    // $("#" + dialId).prop("disabled", readOnly);
     $("#" + dialId).trigger('configure', {
         "readOnly" : readOnly ? "true" : "false",
         "inputColor" : readOnly ? "#999" : "#000",

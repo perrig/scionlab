@@ -65,8 +65,8 @@
    "port": 42003
   },
   {
-   "name": "17-ffaa:1:f",
-   "isdas": "17-ffaa:1:f",
+   "name": "17-ffaa:1:13",
+   "isdas": "17-ffaa:1:13",
    "addr": "192.168.1.111",
    "port": 42003
   }
